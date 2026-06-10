@@ -1,0 +1,6 @@
+{
+  "name": "DUNIA",
+  "description": "Dual Universe of Needs, Income & Aspirations. Tracker keuangan personal & bersama serta roadmap masa depan Haikal & Ummu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
