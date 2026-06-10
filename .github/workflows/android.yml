@@ -2,11 +2,11 @@ name: Build & Install Android APK
 
 on:
   push:
-    branches: [ "main", "master", "developer" ]
+    branches:
+      - '**'
     tags:
       - 'v*'
   pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
@@ -60,5 +60,28 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update Latest Release (On Every Push to Any Branch)
+      if: "!startsWith(github.ref, 'refs/tags/v')"
+      uses: softprops/action-gh-release@v2
+      with:
+        files: build-artifacts/DUNIA-Mitra-App-Debug.apk
+        name: "DUNIA Mitra App Latest Build"
+        tag_name: "latest"
+        body: |
+          ### File APK Terbaru Berhasil Di-build! 🎉
+          
+          Unduhlah berkas APK di bawah ini dan pasang langsung di HP Android kamu.
+          
+          **Detail Berkas:**
+          - **Nama File**: `DUNIA-Mitra-App-Debug.apk`
+          - **Build Time**: ${{ github.event.head_commit.timestamp || 'N/A' }}
+          - **Commit link**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+          
+          *Catatan: Pastikan kamu mengizinkan instalasi dari sumber tidak dikenal (Unknown Sources) di pengaturan keamanan HP kamu.*
+        draft: false
+        prerelease: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

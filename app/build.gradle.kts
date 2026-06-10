@@ -119,3 +119,19 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
+
+tasks.register("copyDebugApk") {
+  val buildDir = layout.buildDirectory
+  val rootDirFile = project.layout.projectDirectory.asFile
+  doLast {
+    val apkFile = buildDir.file("outputs/apk/debug/app-debug.apk").get().asFile
+    if (apkFile.exists()) {
+      apkFile.copyTo(File(rootDirFile, "DUNIA-Mitra-App-Debug.apk"), overwrite = true)
+    }
+  }
+}
+tasks.configureEach {
+  if (name == "assembleDebug") {
+    finalizedBy("copyDebugApk")
+  }
+}
