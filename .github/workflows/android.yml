@@ -1,0 +1,64 @@
+name: Build & Install Android APK
+
+on:
+  push:
+    branches: [ "main", "master", "developer" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK and Upload Release Artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'gradle'
+
+    - name: Grant Execute Permission to Gradlew
+      run: chmod +x gradlew
+
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --no-daemon
+
+    - name: Rename & Prepare APK Artifact
+      run: |
+        mkdir -p build-artifacts
+        cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
+        echo "APK file successfully prepared in build-artifacts/"
+
+    - name: Upload APK As Action Run Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DUNIA-Mitra-App-Debug-APK
+        path: build-artifacts/DUNIA-Mitra-App-Debug.apk
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Create Git Release & Upload APK (On Version Tag Push)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: build-artifacts/DUNIA-Mitra-App-Debug.apk
+        name: Release ${{ github.ref_name }}
+        tag_name: ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

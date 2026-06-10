@@ -1,4 +1,4 @@
-package com.example
+package com.example // Force APK generation
 
 import android.os.Bundle
 import android.widget.Toast
