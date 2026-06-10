@@ -876,7 +876,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
                                     category = obj.getString("category"),
                                     description = obj.getString("description"),
                                     tag = obj.getString("tag"),
-                                    imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri", null)
+                                    imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri")?.takeIf { it.isNotEmpty() }
                                 )
                             )
                         }
