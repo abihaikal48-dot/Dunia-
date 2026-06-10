@@ -137,6 +137,45 @@ object DuniaSyncClient {
     }
 
     /**
+     * Diagnostic tool: Pings Google Sheets Web App to check connection and permissions.
+     * Returns:
+     * - "SUCCESS" if fully ready.
+     * - "NEED_LOGIN" if we hit the Google account login screen (implying "Who has access" != "Anyone").
+     * - "BAD_URL" if URL is wrong or empty.
+     * - An error message describing the exception otherwise.
+     */
+    suspend fun testGoogleSheetsConnection(webAppUrl: String): String = withContext(Dispatchers.IO) {
+        if (webAppUrl.isBlank()) return@withContext "BAD_URL"
+        if (!webAppUrl.startsWith("https://script.google.com/")) return@withContext "BAD_URL"
+        
+        val url = "$webAppUrl?action=test"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val bodyStr = response.body?.string() ?: ""
+                val code = response.code
+                if (code == 200) {
+                    if (bodyStr.contains("<!DOCTYPE html") || bodyStr.contains("login") || bodyStr.contains("Sign in")) {
+                        "NEED_LOGIN"
+                    } else if (bodyStr.contains("sukses") || bodyStr.contains("success")) {
+                        "SUCCESS"
+                    } else {
+                        "UNKNOWN_RESPONSE"
+                    }
+                } else {
+                    "HTTP_ERROR_$code"
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "EXCEPTION: ${e.localizedMessage ?: e.message}"
+        }
+    }
+
+    /**
      * Transmits the current database snapshot directly to the Google Apps Script Web App URL.
      */
     suspend fun syncWithGoogleSheets(webAppUrl: String, jsonDbContent: String): Boolean = withContext(Dispatchers.IO) {
@@ -159,5 +198,99 @@ object DuniaSyncClient {
             e.printStackTrace()
             false
         }
+    }
+
+    /**
+     * Uploads the database envelope json to Google Firebase Realtime Database.
+     */
+    suspend fun uploadSyncEnvelopeToFirebase(firebaseUrl: String, syncKey: String, envelopeJsonStr: String, authToken: String? = null): Boolean = withContext(Dispatchers.IO) {
+        if (firebaseUrl.isBlank() || syncKey.isBlank()) return@withContext false
+        val cleanUrl = formatFirebaseUrl(firebaseUrl, syncKey, authToken)
+        val mediaType = "application/json".toMediaTypeOrNull()
+        val body = envelopeJsonStr.toRequestBody(mediaType)
+        val request = Request.Builder()
+            .url(cleanUrl)
+            .put(body)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
+     * Downloads the latest synced envelope json from Google Firebase Realtime Database.
+     */
+    suspend fun fetchSyncEnvelopeFromFirebase(firebaseUrl: String, syncKey: String, authToken: String? = null): String? = withContext(Dispatchers.IO) {
+        if (firebaseUrl.isBlank() || syncKey.isBlank()) return@withContext null
+        val cleanUrl = formatFirebaseUrl(firebaseUrl, syncKey, authToken)
+        val request = Request.Builder()
+            .url(cleanUrl)
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string()
+                    if (bodyStr == "{}" || bodyStr.isNullOrBlank() || bodyStr == "null") {
+                        null
+                    } else {
+                        bodyStr
+                    }
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Diagnostic tool to ping Firebase database to check connection, permissions or rules.
+     */
+    suspend fun testFirebaseConnection(firebaseUrl: String, syncKey: String, authToken: String? = null): String = withContext(Dispatchers.IO) {
+        if (firebaseUrl.isBlank()) return@withContext "BAD_URL"
+        val cleanUrl = formatFirebaseUrl(firebaseUrl, syncKey, authToken)
+        val request = Request.Builder()
+            .url(cleanUrl)
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val code = response.code
+                if (response.isSuccessful) {
+                    "SUCCESS"
+                } else if (code == 401 || code == 403) {
+                    "PERMISSION_DENIED"
+                } else {
+                    "HTTP_ERROR_$code"
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "EXCEPTION: ${e.localizedMessage ?: e.message}"
+        }
+    }
+
+    private fun formatFirebaseUrl(baseUrl: String, syncKey: String, authToken: String?): String {
+        var url = baseUrl.trim()
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            url = "https://$url"
+        }
+        if (!url.endsWith("/")) {
+            url += "/"
+        }
+        val safeKey = syncKey.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        url += "dunia_db/$safeKey.json"
+        if (!authToken.isNullOrBlank()) {
+            url += "?auth=$authToken"
+        }
+        return url
     }
 }

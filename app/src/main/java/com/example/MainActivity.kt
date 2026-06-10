@@ -1948,6 +1948,29 @@ fun CashflowLedgerTab(
 
     var showAddForm by remember { mutableStateOf(false) }
     var selectedReceiptUrl by remember { mutableStateOf<String?>(null) }
+    
+    // Edit transaction states
+    var showEditTxDialog by remember { mutableStateOf<com.example.data.TransactionEntity?>(null) }
+    var editType by remember { mutableStateOf("PENGELUARAN") }
+    var editUser by remember { mutableStateOf("HAIKAL") }
+    var editAmount by remember { mutableStateOf("") }
+    var editCategory by remember { mutableStateOf("") }
+    var editDesc by remember { mutableStateOf("") }
+    var editTag by remember { mutableStateOf("") }
+    var editImageUri by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(showEditTxDialog) {
+        if (showEditTxDialog != null) {
+            val tx = showEditTxDialog!!
+            editType = tx.type
+            editUser = tx.user
+            editAmount = tx.amount.toLong().toString()
+            editCategory = tx.category
+            editDesc = tx.description
+            editTag = tx.tag
+            editImageUri = tx.imageUri
+        }
+    }
 
     // Dialog state
     var selectedType by remember { mutableStateOf("PENGELUARAN") }
@@ -2085,8 +2108,17 @@ fun CashflowLedgerTab(
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
-                        IconButton(onClick = { viewModel.deleteTransaction(tx) }) {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Hapus", tint = TextMuted, modifier = Modifier.size(16.dp))
+                        IconButton(
+                            onClick = { showEditTxDialog = tx },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit Transaksi", tint = TextMuted, modifier = Modifier.size(13.dp))
+                        }
+                        IconButton(
+                            onClick = { viewModel.deleteTransaction(tx) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Hapus", tint = DangerAccent.copy(alpha = 0.5f), modifier = Modifier.size(13.dp))
                         }
                     }
                 }
@@ -2316,6 +2348,160 @@ fun CashflowLedgerTab(
                 confirmButton = {
                     TextButton(onClick = { selectedReceiptUrl = null }) {
                         Text("Tutup", color = CombinedAccent, fontWeight = FontWeight.Bold)
+                    }
+                }
+            )
+        }
+
+        // Edit Transaction Dialog
+        if (showEditTxDialog != null) {
+            val txToEdit = showEditTxDialog!!
+            val editCategories = if (editType == "PEMASUKAN") incomeCategories else expenseCategories
+            
+            // Sync categories if type differs
+            LaunchedEffect(editType) {
+                if (editType == "PEMASUKAN") {
+                    if (!incomeCategories.contains(editCategory)) {
+                        editCategory = incomeCategories.first()
+                    }
+                } else {
+                    if (!expenseCategories.contains(editCategory)) {
+                        editCategory = expenseCategories.first()
+                    }
+                }
+            }
+
+            AlertDialog(
+                onDismissRequest = { showEditTxDialog = null },
+                containerColor = BgCard,
+                title = { Text("Koreksi Catatan Keuangan 🖊️", fontWeight = FontWeight.Bold, fontSize = 15.sp, fontFamily = FontFamily.Monospace) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Type choice
+                        Row {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .border(1.dp, if (editType == "PENGELUARAN") DangerAccent else BorderColor)
+                                    .clickable { editType = "PENGELUARAN" }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Pengeluaran (-)", color = if (editType == "PENGELUARAN") DangerAccent else TextSecondary, fontSize = 12.sp)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .border(1.dp, if (editType == "PEMASUKAN") SuccessAccent else BorderColor)
+                                    .clickable { editType = "PEMASUKAN" }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Pemasukan (+)", color = if (editType == "PEMASUKAN") SuccessAccent else TextSecondary, fontSize = 12.sp)
+                            }
+                        }
+
+                        // User choice
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(
+                                Triple("HAIKAL", haikalName, HaikalAccent),
+                                Triple("UMMU", ummuName, UmmuAccent),
+                                Triple("BERDUA", "Joint", CombinedAccent)
+                            ).forEach { (userKey, label, color) ->
+                                val selected = editUser == userKey
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(if (selected) color.copy(alpha = 0.15f) else BgDeep)
+                                        .border(1.dp, if (selected) color else BorderColor)
+                                        .clickable { editUser = userKey }
+                                        .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(label, fontSize = 10.sp, color = if (selected) color else TextSecondary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = editAmount,
+                            onValueChange = { editAmount = it.filter { c -> c.isDigit() } },
+                            label = { Text("Jumlah Uang (Rp)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // Category select List
+                        Column {
+                            Text("Kategori:", fontSize = 10.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            androidx.compose.foundation.lazy.LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(editCategories) { cat ->
+                                    val isSelected = editCategory == cat
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isSelected) CombinedAccent else BgDeep)
+                                            .clickable { editCategory = cat }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(cat, fontSize = 9.sp, color = if (isSelected) Color.White else TextSecondary, fontWeight = FontWeight.Medium)
+                                    }
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = editDesc,
+                            onValueChange = { editDesc = it },
+                            label = { Text("Deskripsi Transaksi") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = editTag,
+                            onValueChange = { editTag = it },
+                            label = { Text("Tag (misal: #rutin, #sedekah)") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val amtVal = editAmount.toDoubleOrNull() ?: 0.0
+                            if (amtVal > 0.0 && editDesc.trim().isNotEmpty()) {
+                                viewModel.updateTransaction(
+                                    txToEdit.copy(
+                                        type = editType,
+                                        user = editUser,
+                                        amount = amtVal,
+                                        category = editCategory,
+                                        description = editDesc,
+                                        tag = editTag,
+                                        imageUri = editImageUri
+                                    )
+                                )
+                                showEditTxDialog = null
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                    ) {
+                        Text("Simpan Perubahan", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEditTxDialog = null }) {
+                        Text("Batal")
                     }
                 }
             )
@@ -3260,6 +3446,29 @@ fun CicilanHutangTab(viewModel: DuniaViewModel) {
     var inputDueDay by remember { mutableStateOf("5") }
     var inputOwner by remember { mutableStateOf("HAIKAL") }
 
+    // Edit inputs
+    var showEditCicilanDialog by remember { mutableStateOf<com.example.data.CicilanEntity?>(null) }
+    var editCicilanName by remember { mutableStateOf("") }
+    var editCicilanTotalValue by remember { mutableStateOf("") }
+    var editCicilanMonthlyPayment by remember { mutableStateOf("") }
+    var editCicilanRemainingMonths by remember { mutableStateOf("") }
+    var editCicilanPaidMonths by remember { mutableStateOf("") }
+    var editCicilanDueDay by remember { mutableStateOf("5") }
+    var editCicilanOwner by remember { mutableStateOf("HAIKAL") }
+
+    LaunchedEffect(showEditCicilanDialog) {
+        if (showEditCicilanDialog != null) {
+            val c = showEditCicilanDialog!!
+            editCicilanName = c.name
+            editCicilanTotalValue = c.totalValue.toLong().toString()
+            editCicilanMonthlyPayment = c.monthlyPayment.toLong().toString()
+            editCicilanRemainingMonths = c.remainingMonths.toString()
+            editCicilanPaidMonths = c.paidMonths.toString()
+            editCicilanDueDay = c.dueDateDay.toString()
+            editCicilanOwner = c.owner
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -3309,8 +3518,22 @@ fun CicilanHutangTab(viewModel: DuniaViewModel) {
                         Text(item.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                         Text("Penanggung jawab: ${item.owner} / Jatuh Tempo: Tanggal ${item.dueDateDay}", fontSize = 10.sp, color = TextSecondary)
                     }
-                    IconButton(onClick = { viewModel.deleteCicilan(item) }) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Tutup", tint = TextMuted, modifier = Modifier.size(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = { showEditCicilanDialog = item },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit Cicilan", tint = TextMuted, modifier = Modifier.size(14.dp))
+                        }
+                        IconButton(
+                            onClick = { viewModel.deleteCicilan(item) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Tutup", tint = TextMuted, modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
 
@@ -3465,6 +3688,129 @@ fun CicilanHutangTab(viewModel: DuniaViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showForm = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    if (showEditCicilanDialog != null) {
+        val originalCicilan = showEditCicilanDialog!!
+        AlertDialog(
+            onDismissRequest = { showEditCicilanDialog = null },
+            containerColor = BgCard,
+            title = { Text("Koreksi Cicilan Terikat 🖊️", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editCicilanName,
+                        onValueChange = { editCicilanName = it },
+                        label = { Text("Nama Cicilan (e.g. Motor)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCicilanTotalValue,
+                        onValueChange = { editCicilanTotalValue = it },
+                        label = { Text("Total Nilai Angsuran (Rp)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCicilanMonthlyPayment,
+                        onValueChange = { editCicilanMonthlyPayment = it },
+                        label = { Text("Cicilan Per Bulan (Rp)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCicilanPaidMonths,
+                        onValueChange = { editCicilanPaidMonths = it },
+                        label = { Text("Jumlah Bulan Sudah Terbayar") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCicilanRemainingMonths,
+                        onValueChange = { editCicilanRemainingMonths = it },
+                        label = { Text("Sisa Waktu (Bulan)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editCicilanDueDay,
+                        onValueChange = { editCicilanDueDay = it },
+                        label = { Text("Hari Jatuh Tempo Bulanan (1-31)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (editCicilanOwner == "HAIKAL") CombinedAccent else BorderColor)
+                                .clickable { editCicilanOwner = "HAIKAL" }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Haikal", color = if (editCicilanOwner == "HAIKAL") CombinedAccent else TextSecondary)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (editCicilanOwner == "UMMU") CombinedAccent else BorderColor)
+                                .clickable { editCicilanOwner = "UMMU" }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Ummu", color = if (editCicilanOwner == "UMMU") CombinedAccent else TextSecondary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val total = editCicilanTotalValue.toDoubleOrNull() ?: 0.0
+                        val monthly = editCicilanMonthlyPayment.toDoubleOrNull() ?: 0.0
+                        val remaining = editCicilanRemainingMonths.toIntOrNull() ?: 1
+                        val paid = editCicilanPaidMonths.toIntOrNull() ?: 0
+                        val due = editCicilanDueDay.toIntOrNull() ?: 5
+
+                        if (editCicilanName.trim().isNotEmpty() && monthly > 0.0) {
+                            viewModel.updateCicilan(
+                                originalCicilan.copy(
+                                    name = editCicilanName,
+                                    totalValue = total,
+                                    monthlyPayment = monthly,
+                                    remainingMonths = remaining,
+                                    paidMonths = paid,
+                                    dueDateDay = due,
+                                    owner = editCicilanOwner
+                                )
+                            )
+                            showEditCicilanDialog = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Simpan Perubahan")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditCicilanDialog = null }) {
                     Text("Batal")
                 }
             }
@@ -4447,6 +4793,27 @@ fun WishlistControlView(
     var priorityInput by remember { mutableStateOf(3) }
     var ownerInput by remember { mutableStateOf("HAIKAL") }
 
+    // Edit wishlist states
+    var showEditWishlistDialog by remember { mutableStateOf<com.example.data.WishlistEntity?>(null) }
+    var editWishlistName by remember { mutableStateOf("") }
+    var editWishlistPrice by remember { mutableStateOf("") }
+    var editWishlistCategory by remember { mutableStateOf("Keinginan") }
+    var editWishlistPriority by remember { mutableStateOf(3) }
+    var editWishlistOwner by remember { mutableStateOf("HAIKAL") }
+    var editWishlistStatus by remember { mutableStateOf("PENDING") }
+
+    LaunchedEffect(showEditWishlistDialog) {
+        if (showEditWishlistDialog != null) {
+            val w = showEditWishlistDialog!!
+            editWishlistName = w.name
+            editWishlistPrice = w.estimatedPrice.toLong().toString()
+            editWishlistCategory = w.category
+            editWishlistPriority = w.priority
+            editWishlistOwner = w.owner
+            editWishlistStatus = w.status
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -4568,6 +4935,13 @@ fun WishlistControlView(
                             }
                         }
 
+                        IconButton(
+                            onClick = { showEditWishlistDialog = item },
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit Antrean", tint = TextMuted, modifier = Modifier.size(14.dp))
+                        }
+
                         IconButton(onClick = { viewModel.deleteWishlist(item) }, modifier = Modifier.size(26.dp)) {
                             Icon(imageVector = Icons.Default.Delete, contentDescription = "Batal", tint = TextMuted, modifier = Modifier.size(16.dp))
                         }
@@ -4678,6 +5052,122 @@ fun WishlistControlView(
             },
             dismissButton = {
                 TextButton(onClick = { showForm = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    if (showEditWishlistDialog != null) {
+        val originalWishlist = showEditWishlistDialog!!
+        AlertDialog(
+            onDismissRequest = { showEditWishlistDialog = null },
+            containerColor = BgCard,
+            title = { Text("Koreksi Antrean Belanja 🖊️", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editWishlistName,
+                        onValueChange = { editWishlistName = it },
+                        label = { Text("Nama Barang Belanjaan") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editWishlistPrice,
+                        onValueChange = { editWishlistPrice = it },
+                        label = { Text("Estimasi Harga (Rp)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Kategori Wishlist:", fontSize = 11.sp, color = TextSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        listOf("Kebutuhan", "Keinginan").forEach { cat ->
+                            val isSelected = editWishlistCategory == cat
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .border(1.dp, if (isSelected) CombinedAccent else BorderColor)
+                                    .clickable { editWishlistCategory = cat }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(cat, fontSize = 11.sp, color = if (isSelected) CombinedAccent else TextPrimary)
+                            }
+                        }
+                    }
+
+                    Text("Prioritas Urgensi (1-5):", fontSize = 11.sp, color = TextSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        (1..5).forEach { p ->
+                            val isSelected = editWishlistPriority == p
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(if (isSelected) CombinedAccent else BgDeep)
+                                    .clickable { editWishlistPriority = p }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("$p", fontSize = 11.sp, color = if (isSelected) Color.White else TextPrimary)
+                            }
+                        }
+                    }
+
+                    Text("Pemuat Antrean:", fontSize = 11.sp, color = TextSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (editWishlistOwner == "HAIKAL") CombinedAccent else BorderColor)
+                                .clickable { editWishlistOwner = "HAIKAL" }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(haikalName)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (editWishlistOwner == "UMMU") CombinedAccent else BorderColor)
+                                .clickable { editWishlistOwner = "UMMU" }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(ummuName)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val prcObj = editWishlistPrice.toDoubleOrNull() ?: 0.0
+                        if (editWishlistName.trim().isNotEmpty() && prcObj > 0) {
+                            viewModel.updateWishlist(
+                                originalWishlist.copy(
+                                    name = editWishlistName,
+                                    estimatedPrice = prcObj,
+                                    category = editWishlistCategory,
+                                    priority = editWishlistPriority,
+                                    owner = editWishlistOwner,
+                                    status = editWishlistStatus
+                                )
+                            )
+                            showEditWishlistDialog = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Simpan Perubahan")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditWishlistDialog = null }) {
                     Text("Batal")
                 }
             }
@@ -4866,6 +5356,10 @@ fun ProfilSettingsScreen(
     val lastSyncTime by viewModel.lastSyncTime.collectAsState()
     val sheetsSyncStatus by viewModel.sheetsSyncStatus.collectAsState()
     val lastSheetsSyncTime by viewModel.lastSheetsSyncTime.collectAsState()
+    val sheetsDiagnosticResult by viewModel.sheetsDiagnosticResult.collectAsState()
+    val firebaseSyncStatus by viewModel.firebaseSyncStatus.collectAsState()
+    val lastFirebaseSyncTime by viewModel.lastFirebaseSyncTime.collectAsState()
+    val firebaseDiagnosticResult by viewModel.firebaseDiagnosticResult.collectAsState()
 
     var jobHaikal by remember { mutableStateOf("") }
     var jobUmmu by remember { mutableStateOf("") }
@@ -4876,6 +5370,9 @@ fun ProfilSettingsScreen(
     var isAutoSyncEnabled by remember { mutableStateOf(false) }
     var sheetsUrl by remember { mutableStateOf("") }
     var isSheetsAutoEnabled by remember { mutableStateOf(false) }
+    var firebaseDbUrl by remember { mutableStateOf("") }
+    var firebaseAuthToken by remember { mutableStateOf("") }
+    var isFirebaseAutoEnabled by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -4892,6 +5389,9 @@ fun ProfilSettingsScreen(
             isAutoSyncEnabled = configs["SYNC_AUTO_ENABLED"] == "true"
             sheetsUrl = configs["SHEETS_WEBAPP_URL"] ?: ""
             isSheetsAutoEnabled = configs["SHEETS_AUTO_ENABLED"] == "true"
+            firebaseDbUrl = configs["FIREBASE_URL"] ?: ""
+            firebaseAuthToken = configs["FIREBASE_AUTH_TOKEN"] ?: ""
+            isFirebaseAutoEnabled = configs["FIREBASE_AUTO_ENABLED"] == "true"
         }
     }
 
@@ -5324,6 +5824,352 @@ fun ProfilSettingsScreen(
                     ) {
                         Text("🕒 Terakhir terkirim ke Sheet:", fontSize = 9.sp, color = TextMuted)
                         Text(lastSheetsSyncTime, fontSize = 9.sp, color = SuccessAccent, fontWeight = FontWeight.Bold)
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 4.dp))
+
+                    Text("🔍 Alat Diagnosis Akses Google Sheets", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    
+                    Button(
+                        onClick = {
+                            if (sheetsUrl.isNotBlank()) {
+                                viewModel.runSheetsDiagnostic(sheetsUrl)
+                            } else {
+                                Toast.makeText(context, "Atur URL Web App terlebih dahulu!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (sheetsDiagnosticResult == "TESTING") Color.Gray else CombinedAccent.copy(alpha = 0.15f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (sheetsDiagnosticResult == "TESTING") Color.Gray else CombinedAccent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (sheetsDiagnosticResult == "TESTING") "Memeriksa Akses... ⏳" else "Tes Koneksi & Validasi Izin ⚡",
+                            color = if (sheetsDiagnosticResult == "TESTING") Color.White else CombinedAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (sheetsDiagnosticResult.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(BgDark)
+                                .border(1.dp, when (sheetsDiagnosticResult) {
+                                    "SUCCESS" -> SuccessAccent
+                                    "NEED_LOGIN" -> WarningAccent
+                                    "BAD_URL" -> DangerAccent
+                                    "TESTING" -> TextMuted
+                                    else -> DangerAccent
+                                }, RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            when (sheetsDiagnosticResult) {
+                                "SUCCESS" -> {
+                                    Text("✅ KONEKSI INDAH & SUKSES!", color = SuccessAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Google Sheets terhubung dengan sempurna dan unblocked! Sekarang HP Haikal dan HP Ummu dapat melakukan sinkronisasi otomatis menggunakan kata kunci tanpa halangan. 🎉",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                "NEED_LOGIN" -> {
+                                    Text("⚠️ JALUR TERBLOKIR: GOOGLE MEMINTA LOGIN", color = WarningAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Penyebab:\nSaat men-deploy Web App Google Apps Script, pilihan 'Who has access' Anda isi 'Only myself' (Hanya Saya).\n\nSolusi Instan:\n1. Buka kembali Google Spreadsheet -> Apps Script Anda.\n2. Klik tombol Deploy -> Manage deployments (Kelola deployment).\n3. Klik ikon Edit (pensil) di kanan atas, tingkatkan versi ke 'New version' (Versi Baru).\n4. Cari bagian 'Who has access' (Siapa yang memiliki akses).\n5. UPGRADE pilihan tersebut dari 'Only myself' menjadi 'Anyone' (Siapa saja).\n6. Klik Deploy dan salin ulang alamat URL baru tersebut ke aplikasi ini!",
+                                        color = TextPrimary,
+                                        fontSize = 10.sp,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                                "BAD_URL" -> {
+                                    Text("❌ FORMAT URL SALAH", color = DangerAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Format URL Google Apps Script yang Anda masukkan tidak valid. Pastikan URL dimulai dengan 'https://script.google.com/macros/s/' dan diakhiri dengan '/exec'.",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                "TESTING" -> {
+                                    Text("⏳ MEMERIKSA...", color = TextMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Mengirim paket uji coba terenkripsi ke Google Cloud untuk memvalidasi privasi bucket dan port paralel HP Ummu & HP Haikal...",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                else -> {
+                                    Text("🌐 GANGGUAN KONEKSI INTERNET / AKSES", color = DangerAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Keterangan Error:\n$sheetsDiagnosticResult\n\nTips:\nHarap pastikan HP Anda terhubung ke internet, Google Apps Script telah di-deploy dengan benar sebagai 'Web App', dan URL di atas dimasukkan secara lengkap tanpa terpotong.",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // GOOGLE FIREBASE REAL-TIME SYNCHRONIZATION CARD (Requested feature: Firebase Sync)
+        item {
+            val firebaseAmber = Color(0xFFF57C00)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(BgCard)
+                    .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "🔥 Firebase Real-time Cloud Sync",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = firebaseAmber
+                    )
+
+                    // Realtime status pill for Firebase Sync
+                    val isFirebaseConnected = firebaseSyncStatus.contains("Tersinkronisasi")
+                    val isFirebaseSyncing = firebaseSyncStatus.contains("Menyinkronkan")
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                when {
+                                    isFirebaseSyncing -> firebaseAmber.copy(alpha = 0.15f)
+                                    isFirebaseConnected -> Color(0xFF10B981).copy(alpha = 0.15f)
+                                    else -> TextSecondary.copy(alpha = 0.1f)
+                                }
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when {
+                                            isFirebaseSyncing -> firebaseAmber
+                                            isFirebaseConnected -> Color(0xFF10B981)
+                                            else -> TextSecondary
+                                        }
+                                    )
+                            )
+                            Text(
+                                text = firebaseSyncStatus,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when {
+                                    isFirebaseSyncing -> firebaseAmber
+                                    isFirebaseConnected -> Color(0xFF10B981)
+                                    else -> TextSecondary
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Gunakan database Google Firebase Realtime terdedikasi untuk perlindungan data instan dan sinkronisasi nirkabel ultra-cepat! Hubungkan HP Haikal & HP Ummu melintasi ribuan kilometer secara real-time dengan latency milidetik.",
+                    fontSize = 10.sp,
+                    color = TextSecondary
+                )
+
+                // Row switch toggle for "Aktifkan Auto-Sync Firebase"
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BgDeep)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Aktifkan Sinkronisasi Firebase", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Hubungkan database ke Cloud Firebase", fontSize = 9.sp, color = TextMuted)
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = isFirebaseAutoEnabled,
+                        onCheckedChange = {
+                            isFirebaseAutoEnabled = it
+                            viewModel.saveConfigValue("FIREBASE_AUTO_ENABLED", if (it) "true" else "false")
+                        },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = firebaseAmber
+                        )
+                    )
+                }
+
+                if (isFirebaseAutoEnabled) {
+                    OutlinedTextField(
+                        value = firebaseDbUrl,
+                        onValueChange = {
+                            firebaseDbUrl = it
+                            viewModel.saveConfigValue("FIREBASE_URL", it)
+                        },
+                        label = { Text("Base URL Firebase Database") },
+                        placeholder = { Text("https://dunia-mitra-default-rtdb.firebaseio.com/") },
+                        supportingText = {
+                            Text(
+                                "Format: tautan https:// dari Firebase Realtime Database Anda.",
+                                fontSize = 8.sp,
+                                color = TextMuted
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = firebaseAmber),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = firebaseAuthToken,
+                        onValueChange = {
+                            firebaseAuthToken = it
+                            viewModel.saveConfigValue("FIREBASE_AUTH_TOKEN", it)
+                        },
+                        label = { Text("Database Secret / Auth Token (Opsional)") },
+                        placeholder = { Text("Database secret atau kosongkan jika rules Public") },
+                        supportingText = {
+                            Text(
+                                "Isi jika rules read/write melarang pengguna tanpa auth.",
+                                fontSize = 8.sp,
+                                color = TextMuted
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = firebaseAmber),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = {
+                            if (firebaseDbUrl.isNotBlank() && syncKey.isNotBlank()) {
+                                scope.launch {
+                                    viewModel.localFirebaseAutoUpload()
+                                    Toast.makeText(context, "Sinkronisasi paksa ke Firebase dijalankan...", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Atur URL Firebase & Kunci Sinkronisasi terlebih dahulu!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = firebaseAmber),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Sync Manual ke Firebase 🔥", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🕒 Terakhir terkirim ke Firebase:", fontSize = 9.sp, color = TextMuted)
+                        Text(lastFirebaseSyncTime, fontSize = 9.sp, color = firebaseAmber, fontWeight = FontWeight.Bold)
+                    }
+
+                    HorizontalDivider(color = BorderColor, modifier = Modifier.padding(vertical = 4.dp))
+
+                    Text("🔍 Alat Diagnosis Akses Google Firebase", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+
+                    Button(
+                        onClick = {
+                            if (firebaseDbUrl.isNotBlank() && syncKey.isNotBlank()) {
+                                viewModel.runFirebaseDiagnostic(firebaseDbUrl, syncKey, firebaseAuthToken.takeIf { it.isNotBlank() })
+                            } else {
+                                Toast.makeText(context, "Isi URL Firebase & Kunci Sinkronisasi untuk mengetes!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (firebaseDiagnosticResult == "TESTING") Color.Gray else firebaseAmber.copy(alpha = 0.15f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (firebaseDiagnosticResult == "TESTING") Color.Gray else firebaseAmber),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (firebaseDiagnosticResult == "TESTING") "Memeriksa Jalur Firebase... ⏳" else "Tes Koneksi & Validasi Keamanan Firebase ⚡",
+                            color = if (firebaseDiagnosticResult == "TESTING") Color.White else firebaseAmber,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (firebaseDiagnosticResult.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(BgDark)
+                                .border(1.dp, when (firebaseDiagnosticResult) {
+                                    "SUCCESS" -> Color(0xFF10B981)
+                                    "PERMISSION_DENIED" -> WarningAccent
+                                    "BAD_URL" -> DangerAccent
+                                    "TESTING" -> TextMuted
+                                    else -> DangerAccent
+                                }, RoundedCornerShape(10.dp))
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            when (firebaseDiagnosticResult) {
+                                "SUCCESS" -> {
+                                    Text("✅ TEKONEKSI SEMPURNA KE FIREBASE!", color = Color(0xFF10B981), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Database Firebase terhubung unblocked melintasi bandwidth tinggi! Data terunggah & terunduh seketika di latar belakang saat Anda mengisinya. Sinergi mantap Haikal & Ummu terjamin aktif. 🚀",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                "PERMISSION_DENIED" -> {
+                                    Text("⚠️ JALUR PRIVATE TERKUNCI (PERMISSION_DENIED)", color = WarningAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Penyebab:\nAturan keamanan Firebase Database Anda melarang transaksi baca/tulis tanpa autentikasi token.\n\nSolusi Instan:\n1. Buka Firebase Console Anda -> Realtime Database -> Rules (Aturan).\n2. Ganti rules menjadi Public:\n   {\n     \"rules\": {\n       \".read\": true,\n       \".write\": true\n     }\n   }\n3. Atau, dapatkan token kredensial Anda dari Firebase Console -> Project Settings -> Service Accounts -> Database Secrets, lalu salin token rahasia tersebut ke kolom rahasia di atas!",
+                                        color = TextPrimary,
+                                        fontSize = 10.sp,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                                "BAD_URL" -> {
+                                    Text("❌ FORMAT URL SALAH / TIDAK VALID", color = DangerAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "URL harus disalin utuh langsung dari tab Dashboard Realtime Database di console Firebase Anda, misal https://[nama-proyek]-default-rtdb.firebaseio.com/",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                "TESTING" -> {
+                                    Text("⏳ MEMINTA VALIDASI CLOUD...", color = TextMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Membuat bucket handshake dengan REST API Firebase Cloud...",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                else -> {
+                                    Text("🌐 GANGGUAN HANDSHAKE FIREBASE", color = DangerAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                    Text(
+                                        "Keterangan:\n$firebaseDiagnosticResult\n\nTips:\nPastikan alamat internet aktif dan format database base url yang diisi tidak mengandung spasi atau karakter ilegal.",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

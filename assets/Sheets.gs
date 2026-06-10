@@ -80,6 +80,11 @@ function doGet(e) {
     initializeSheets();
     var action = e.parameter.action;
     
+    if (action === "test") {
+      return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Koneksi sukses! Google Sheets siap!" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     if (action === "pull_cloud_sync") {
       var syncKey = e.parameter.syncKey || "default_sync";
       var payloadStr = PropertiesService.getScriptProperties().getProperty("sync_db_" + syncKey) || "{}";
