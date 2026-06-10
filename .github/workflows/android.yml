@@ -39,7 +39,14 @@ jobs:
     - name: Rename & Prepare APK Artifact
       run: |
         mkdir -p build-artifacts
-        cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
+        if [ -f DUNIA-Mitra-App-Debug.apk ]; then
+          cp DUNIA-Mitra-App-Debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
+        elif [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+          cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
+        else
+          echo "ERROR: APK file not found!"
+          exit 1
+        fi
         echo "APK file successfully prepared in build-artifacts/"
 
     - name: Upload APK As Action Run Artifact
@@ -62,6 +69,15 @@ jobs:
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update Git "latest" Tag on Remote
+      if: "!startsWith(github.ref, 'refs/tags/v')"
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -fa latest -m "DUNIA Mitra App Latest Build"
+        git push origin :refs/tags/latest || true
+        git push origin latest --force
 
     - name: Update Latest Release (On Every Push to Any Branch)
       if: "!startsWith(github.ref, 'refs/tags/v')"
