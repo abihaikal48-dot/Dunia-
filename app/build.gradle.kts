@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -8,12 +10,12 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk = 35
 
   defaultConfig {
     applicationId = "com.aistudio.dunia.hkum26"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 35
     versionCode = 1
     versionName = "1.0"
 
@@ -21,6 +23,22 @@ android {
   }
 
   signingConfigs {
+    // Decode debug.keystore from base64 if not present
+    val debugKeystoreFile = file("${rootDir}/debug.keystore")
+    if (!debugKeystoreFile.exists()) {
+      val base64File = file("${rootDir}/debug.keystore.base64")
+      if (base64File.exists()) {
+        try {
+          val cleanBase64 = base64File.readText().replace("\\s".toRegex(), "")
+          val bytes = Base64.getDecoder().decode(cleanBase64)
+          debugKeystoreFile.writeBytes(bytes)
+          println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY =====")
+        } catch (e: Exception) {
+          println("ERROR: Failed to decode debug.keystore: ${e.message}")
+        }
+      }
+    }
+
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
@@ -122,12 +140,22 @@ dependencies {
 
 tasks.register("copyDebugApk") {
   val buildDir = layout.buildDirectory
-  val rootDirFile = project.layout.projectDirectory.asFile
+  val rootDirFile = rootDir
   doLast {
     val apkFile = buildDir.file("outputs/apk/debug/app-debug.apk").get().asFile
+    println("===== APK COPY DEBUGGING =====")
+    println("Source file: ${apkFile.absolutePath}")
+    println("Source exists: ${apkFile.exists()}")
     if (apkFile.exists()) {
-      apkFile.copyTo(File(rootDirFile, "DUNIA-Mitra-App-Debug.apk"), overwrite = true)
+      println("Source size: ${apkFile.length()} bytes")
+      val destFile = File(rootDirFile, "DUNIA-Mitra-App-Debug.apk")
+      apkFile.copyTo(destFile, overwrite = true)
+      println("Saved to: ${destFile.absolutePath}")
+      println("Destination size: ${destFile.length()} bytes")
+    } else {
+      println("ERROR: Source app-debug.apk does not exist!")
     }
+    println("==============================")
   }
 }
 tasks.configureEach {
