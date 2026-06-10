@@ -59,6 +59,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Pre-create WebView Code Cache directories to prevent Chromium opendir-not-found errors
+        try {
+            val webViewCacheDirJs = java.io.File(applicationContext.cacheDir, "WebView/Default/HTTP Cache/Code Cache/js")
+            val webViewCacheDirWasm = java.io.File(applicationContext.cacheDir, "WebView/Default/HTTP Cache/Code Cache/wasm")
+            if (!webViewCacheDirJs.exists()) {
+                webViewCacheDirJs.mkdirs()
+            }
+            if (!webViewCacheDirWasm.exists()) {
+                webViewCacheDirWasm.mkdirs()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         // Init databases and repositories on IO scope
         val db = DuniaDatabase.getDatabase(applicationContext, lifecycleScope)
         val repository = DuniaRepository(db.duniaDao())
