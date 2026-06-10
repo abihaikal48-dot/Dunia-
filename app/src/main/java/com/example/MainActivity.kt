@@ -1,4 +1,4 @@
-package com.example // Force APK generation
+package com.example
 
 import android.os.Bundle
 import android.widget.Toast
@@ -58,20 +58,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        // Pre-create WebView Code Cache directories to prevent Chromium opendir-not-found errors
-        try {
-            val webViewCacheDirJs = java.io.File(applicationContext.cacheDir, "WebView/Default/HTTP Cache/Code Cache/js")
-            val webViewCacheDirWasm = java.io.File(applicationContext.cacheDir, "WebView/Default/HTTP Cache/Code Cache/wasm")
-            if (!webViewCacheDirJs.exists()) {
-                webViewCacheDirJs.mkdirs()
-            }
-            if (!webViewCacheDirWasm.exists()) {
-                webViewCacheDirWasm.mkdirs()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
 
         // Init databases and repositories on IO scope
         val db = DuniaDatabase.getDatabase(applicationContext, lifecycleScope)
@@ -1256,7 +1242,7 @@ fun KeuanganScreen(
     haikalName: String,
     ummuName: String
 ) {
-    var screenState by remember { mutableStateOf(0) } // 0 = Cashflow, 1 = Tabungan & Darurat, 2 = Cicilan & Hutang
+    var screenState by remember { mutableStateOf(0) } // 0 = Cashflow, 1 = Anggaran, 2 = Tabungan, 3 = Cicilan
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Tab Selector Row
@@ -1265,9 +1251,9 @@ fun KeuanganScreen(
                 .fillMaxWidth()
                 .background(BgCard)
                 .padding(vertical = 4.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            listOf("Sirkulasi", "Tabungan", "Cicilan").forEachIndexed { idx, label ->
+            listOf("Sirkulasi", "Anggaran", "Tabungan", "Cicilan").forEachIndexed { idx, label ->
                 val active = screenState == idx
                 Box(
                     modifier = Modifier
@@ -1282,7 +1268,7 @@ fun KeuanganScreen(
                         text = label,
                         color = if (active) CombinedAccent else TextSecondary,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -1292,10 +1278,660 @@ fun KeuanganScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             when (screenState) {
                 0 -> CashflowLedgerTab(viewModel, haikalName, ummuName)
-                1 -> TabunganDaruratTab(viewModel, haikalName, ummuName)
-                2 -> CicilanHutangTab(viewModel)
+                1 -> AnggaranBudgetTab(viewModel, haikalName, ummuName)
+                2 -> TabunganDaruratTab(viewModel, haikalName, ummuName)
+                3 -> CicilanHutangTab(viewModel)
             }
         }
+    }
+}
+
+// ==========================================
+// SUB TAB: ANGGARAN & BUDGETING
+// ==========================================
+@Composable
+fun AnggaranBudgetTab(
+    viewModel: DuniaViewModel,
+    haikalName: String,
+    ummuName: String
+) {
+    val stats by viewModel.monthlyStats.collectAsState()
+    var showAddDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf<BudgetStatus?>(null) }
+    var showDeleteDialog by remember { mutableStateOf<BudgetStatus?>(null) }
+
+    // Form settings
+    val expenseCategories = listOf(
+        "Zakat, Infaq & Sedekah", "Makan, Sembako & Jajan", "Transportasi & Bensin",
+        "Sewa Rumah / Kost", "Tagihan Listrik, Air & Internet", "Cicilan & Hutang Mandiri",
+        "Anggaran Kencan / Berdua", "Kesehatan & Obat-obatan", "Pendidikan & Pengembangan Diri",
+        "Hiburan, Belanja & Hobi", "Kebutuhan Orang Tua / Keluarga", "Tabungan Pernikahan Bersama",
+        "Tabungan DP Rumah", "Dana Darurat Berdua", "Reksadana / Emas / Saham", "Asuransi / Proteksi Berdua",
+        "Pengeluaran Tak Terduga"
+    )
+
+    // Compute Overall Budget Statistics
+    val totalBudget = stats.budgetAlerts.sumOf { it.budget }
+    val totalActualSpent = stats.budgetAlerts.sumOf { it.actual }
+    val overallPercentage = if (totalBudget > 0.0) (totalActualSpent / totalBudget).toFloat() else 0f
+    val remainingBudgetTotal = (totalBudget - totalActualSpent).coerceAtLeast(0.0)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Budget management heading
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Manajemen Anggaran Bulanan 🎯",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Tentukan ambang batas spending demi masa depan terarah.",
+                        fontSize = 10.sp,
+                        color = TextSecondary
+                    )
+                }
+
+                Button(
+                    onClick = { showAddDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(32.dp).testTag("add_budget_goal_btn")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Atur Goal", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Summary Card
+        item {
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth().testTag("budget_summary_card"),
+                borderAccent = if (overallPercentage > 1f) DangerAccent else CombinedAccent,
+                glowColor = if (overallPercentage > 1f) DangerAccent else CombinedAccent
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "RINGKASAN ANGGARAN BULAN INI",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = formatRupiah(totalActualSpent) + " / " + formatRupiah(totalBudget),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (totalActualSpent > totalBudget) {
+                                "Over-budget sebesar ${formatRupiah(totalActualSpent - totalBudget)}! 🚨"
+                            } else {
+                                "Tersisa ${formatRupiah(remainingBudgetTotal)} anggaran aman."
+                            },
+                            fontSize = 11.sp,
+                            color = if (totalActualSpent > totalBudget) DangerAccent else SuccessAccent,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Circular progress percentage
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(54.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { overallPercentage.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxSize(),
+                            color = if (overallPercentage > 1f) DangerAccent else if (overallPercentage > 0.8f) WarningAccent else SuccessAccent,
+                            strokeWidth = 5.dp,
+                            trackColor = BorderColor
+                        )
+                        Text(
+                            text = "${(overallPercentage * 100).toInt()}%",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextPrimary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                // Linear Progress bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(CircleShape)
+                        .background(BgDeep)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(fraction = overallPercentage.coerceIn(0f, 1f))
+                            .background(
+                                if (overallPercentage > 1f) DangerAccent
+                                else if (overallPercentage > 0.8f) WarningAccent
+                                else SuccessAccent
+                            )
+                    )
+                }
+            }
+        }
+
+        // Budget Items List
+        if (stats.budgetAlerts.isEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Savings,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = TextSecondary
+                    )
+                    Text(
+                        text = "Belum ada anggaran bulanan diatur.\nYuk atur anggaran pertamamu!",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+        } else {
+            items(stats.budgetAlerts) { budget ->
+                val limit = budget.budget
+                val actual = budget.actual
+                val percent = if (limit > 0.0) (actual / limit).toFloat() else 0f
+                val isExceeded = actual > limit
+                val remaining = (limit - actual).coerceAtLeast(0.0)
+
+                // Get category icon
+                val icon = when {
+                    budget.posName.contains("Sedekah") || budget.posName.contains("Zakat") || budget.posName.contains("Infaq") -> Icons.Default.Favorite
+                    budget.posName.contains("Makan") || budget.posName.contains("Jajan") -> Icons.Default.Restaurant
+                    budget.posName.contains("Transport") || budget.posName.contains("Bensin") -> Icons.Default.DirectionsCar
+                    budget.posName.contains("Rumah") || budget.posName.contains("Kost") -> Icons.Default.Home
+                    budget.posName.contains("Listrik") || budget.posName.contains("Internet") || budget.posName.contains("Air") -> Icons.Default.Wifi
+                    budget.posName.contains("Cicilan") || budget.posName.contains("Hutang") -> Icons.Default.CreditCard
+                    budget.posName.contains("Kencan") -> Icons.Default.FavoriteBorder
+                    budget.posName.contains("Kesehatan") || budget.posName.contains("Obat") -> Icons.Default.LocalHospital
+                    budget.posName.contains("Didik") || budget.posName.contains("Sekolah") || budget.posName.contains("Pendidikan") -> Icons.Default.School
+                    budget.posName.contains("Hiburan") || budget.posName.contains("Belanja") || budget.posName.contains("Hobi") -> Icons.Default.SportsEsports
+                    budget.posName.contains("Orang Tua") || budget.posName.contains("Keluarga") -> Icons.Default.People
+                    budget.posName.contains("Nikah") -> Icons.Default.Favorite
+                    budget.posName.contains("DP") -> Icons.Default.HomeWork
+                    budget.posName.contains("Darurat") -> Icons.Default.Security
+                    budget.posName.contains("Reksa") || budget.posName.contains("Emas") || budget.posName.contains("Saham") -> Icons.Default.ShowChart
+                    budget.posName.contains("Asuransi") || budget.posName.contains("Proteksi") -> Icons.Default.Shield
+                    budget.posName.contains("Tak Terduga") -> Icons.Default.Warning
+                    else -> Icons.Default.AccountBalanceWallet
+                }
+
+                val ownerTag = if (budget.posName.contains(haikalName)) "HAIKAL" else if (budget.posName.contains(ummuName)) "UMMU" else "BERDUA"
+                val ownerColor = if (ownerTag == "HAIKAL") HaikalAccent else if (ownerTag == "UMMU") UmmuAccent else CombinedAccent
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(BgCard)
+                        .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(ownerColor.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = ownerColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            Column {
+                                Text(
+                                    text = budget.posName,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(ownerColor.copy(alpha = 0.15f))
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = if (ownerTag == "HAIKAL") haikalName else if (ownerTag == "UMMU") ummuName else "Berdua",
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = ownerColor
+                                        )
+                                    }
+                                    Text(
+                                        text = "Limit: ${formatRupiah(limit)}",
+                                        fontSize = 10.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                        }
+
+                        // Edit / Delete quick buttons
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(
+                                onClick = { showEditDialog = budget },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit Anggaran",
+                                    tint = CombinedAccent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showDeleteDialog = budget },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Hapus Anggaran",
+                                    tint = DangerAccent,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Progress bar & actual spend text
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${formatRupiah(actual)} Terpakai",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isExceeded) DangerAccent else TextPrimary
+                        )
+                        Text(
+                            text = if (isExceeded) {
+                                "Bocor +${formatRupiah(actual - limit)}!! ⚠️"
+                            } else {
+                                "Sisa: ${formatRupiah(remaining)}"
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isExceeded) DangerAccent else SuccessAccent
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(BgDeep)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(fraction = percent.coerceIn(0f, 1f))
+                                .background(
+                                    if (isExceeded) DangerAccent
+                                    else if (percent >= 0.8f) WarningAccent
+                                    else SuccessAccent
+                                )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Dialog for adding a new Dynamic Budget
+    if (showAddDialog) {
+        var inputLimit by remember { mutableStateOf("") }
+        var inputCat by remember { mutableStateOf(expenseCategories.first()) }
+        var inputOwn by remember { mutableStateOf("BERDUA") }
+        var categoryDropdownExpanded by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            containerColor = BgCard,
+            title = {
+                Text(
+                    text = "Aktivasi Pos Anggaran Baru 🎯",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    // Category Selection
+                    Column {
+                        Text("Mata Pos / Kategori Pengeluaran", fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(BgDeep)
+                                .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                                .clickable { categoryDropdownExpanded = true }
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = inputCat, fontSize = 12.sp, color = TextPrimary)
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = null,
+                                    tint = TextSecondary
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = categoryDropdownExpanded,
+                                onDismissRequest = { categoryDropdownExpanded = false },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.8f)
+                                    .background(BgCard)
+                            ) {
+                                expenseCategories.forEach { cat ->
+                                    DropdownMenuItem(
+                                        text = { Text(cat, fontSize = 12.sp, color = TextPrimary) },
+                                        onClick = {
+                                            inputCat = cat
+                                            categoryDropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Owner Selector
+                    Column {
+                        Text("Pengampu Anggaran (Sirkulasi Pasangan)", fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf(
+                                Triple("HAIKAL", haikalName, HaikalAccent),
+                                Triple("UMMU", ummuName, UmmuAccent),
+                                Triple("BERDUA", "Bersama", CombinedAccent)
+                            ).forEach { (valTag, label, color) ->
+                                val active = inputOwn == valTag
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (active) color.copy(alpha = 0.25f) else BgDeep)
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (active) color else BorderColor,
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { inputOwn = valTag }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (active) TextPrimary else TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Limit input field
+                    Column {
+                        Text("Batas Maksimal Pengeluaran (Rp)", fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = inputLimit,
+                            onValueChange = { inputLimit = it },
+                            placeholder = { Text("Contoh: 350000", fontSize = 12.sp) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CombinedAccent,
+                                unfocusedBorderColor = BorderColor
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("budget_limit_input")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val limitVal = inputLimit.toDoubleOrNull() ?: 0.0
+                        if (limitVal > 0.0) {
+                            viewModel.saveBudgetGoal(inputCat, inputOwn, limitVal)
+                            showAddDialog = false
+                            inputLimit = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Aktifkan", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    // Dialog for editing an existing Dynamic Budget
+    if (showEditDialog != null) {
+        val budget = showEditDialog!!
+        var currentLimitStr by remember { mutableStateOf(budget.budget.toLong().toString()) }
+
+        // Find the exact dynamic key properties if available
+        val categoryName = budget.category.ifEmpty {
+            budget.posName.substringBefore(" (")
+        }
+        val ownerTag = budget.owner.ifEmpty {
+            if (budget.posName.contains(haikalName)) "HAIKAL" else if (budget.posName.contains(ummuName)) "UMMU" else "BERDUA"
+        }
+
+        AlertDialog(
+            onDismissRequest = { showEditDialog = null },
+            containerColor = BgCard,
+            title = {
+                Text(
+                    text = "Amandemen Batas Anggaran ✏️",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "Amanahkan batas baru untuk pos \"$categoryName\"",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = currentLimitStr,
+                        onValueChange = { currentLimitStr = it },
+                        placeholder = { Text("Contoh: 500000", fontSize = 12.sp) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CombinedAccent,
+                            unfocusedBorderColor = BorderColor
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("edit_budget_limit_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val limitVal = currentLimitStr.toDoubleOrNull() ?: 0.0
+                        if (limitVal > 0.0) {
+                            if (budget.category.isNotEmpty()) {
+                                viewModel.saveBudgetGoal(categoryName, ownerTag, limitVal)
+                            } else {
+                                // Fallback parser for seeded hardcoded ones
+                                if (budget.posName.startsWith("Makan")) {
+                                    viewModel.saveConfigValue("BUDGET_MAKAN_HAIKAL", limitVal.toString())
+                                } else if (budget.posName.startsWith("Transport")) {
+                                    viewModel.saveConfigValue("BUDGET_TRANSPORT", limitVal.toString())
+                                } else {
+                                    viewModel.saveConfigValue("BUDGET_KENCAN", limitVal.toString())
+                                }
+                            }
+                            showEditDialog = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Revisi", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = null }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    // Dialog for deleting a Dynamic Budget
+    if (showDeleteDialog != null) {
+        val budget = showDeleteDialog!!
+        val categoryName = budget.category.ifEmpty { budget.posName.substringBefore(" (") }
+        val ownerTag = budget.owner.ifEmpty {
+            if (budget.posName.contains(haikalName)) "HAIKAL" else if (budget.posName.contains(ummuName)) "UMMU" else "BERDUA"
+        }
+
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = null },
+            containerColor = BgCard,
+            title = {
+                Text(
+                    text = "Konfirmasi Nonaktifkan Pos ⚠️",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Apakah kalian berdua yakin ingin menonaktifkan pengawasan anggaran pos \"$categoryName\"? Tindakan ini menghapus limit anggaran, namun tidak menghapus data transaksi pengeluaran.",
+                    fontSize = 12.sp,
+                    color = TextSecondary,
+                    lineHeight = 16.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (budget.category.isNotEmpty()) {
+                            viewModel.deleteBudgetGoal(categoryName, ownerTag)
+                        } else {
+                            // Seeded budgets fallbacks
+                            if (budget.posName.startsWith("Makan")) {
+                                viewModel.saveConfigValue("BUDGET_MAKAN_HAIKAL", "0")
+                            } else if (budget.posName.startsWith("Transport")) {
+                                viewModel.saveConfigValue("BUDGET_TRANSPORT", "0")
+                            } else {
+                                viewModel.saveConfigValue("BUDGET_KENCAN", "0")
+                            }
+                        }
+                        showDeleteDialog = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DangerAccent)
+                ) {
+                    Text("Nonaktifkan", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = null }) {
+                    Text("Batal")
+                }
+            }
+        )
     }
 }
 
@@ -1697,9 +2333,33 @@ fun TabunganDaruratTab(
     val goals by viewModel.savingGoals.collectAsState()
     val configs by viewModel.configs.collectAsState()
     val weddingYearStr = configs["TARGET_NIKAH"] ?: "2029"
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     var activeContributionGoalId by remember { mutableStateOf<Int?>(null) }
     var customContributionAmount by remember { mutableStateOf("") }
+
+    var showAddGoalDialog by remember { mutableStateOf(false) }
+    var showEditGoalDialog by remember { mutableStateOf<com.example.data.SavingGoalEntity?>(null) }
+
+    var newGoalName by remember { mutableStateOf("") }
+    var newGoalTargetAmount by remember { mutableStateOf("") }
+    var newGoalCurrentAmount by remember { mutableStateOf("") }
+    var newGoalOwner by remember { mutableStateOf("BERDUA") }
+
+    var editGoalName by remember { mutableStateOf("") }
+    var editGoalTargetAmount by remember { mutableStateOf("") }
+    var editGoalCurrentAmountState by remember { mutableStateOf("") }
+    var editGoalOwner by remember { mutableStateOf("BERDUA") }
+
+    LaunchedEffect(showEditGoalDialog) {
+        if (showEditGoalDialog != null) {
+            val goal = showEditGoalDialog!!
+            editGoalName = goal.name
+            editGoalTargetAmount = goal.targetAmount.toLong().toString()
+            editGoalCurrentAmountState = goal.currentAmount.toLong().toString()
+            editGoalOwner = goal.owner
+        }
+    }
 
     // --- PERSISTENT INTERACTIVE SIMULATOR STATES ---
     var selectedSimGoalId by remember { mutableStateOf<Int?>(-1) } // -1 means custom manual
@@ -1731,7 +2391,29 @@ fun TabunganDaruratTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Text("Evaluasi Tabungan & Target Capaian", fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = TextPrimary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Evaluasi Tabungan & Capaian",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextPrimary
+                )
+                Button(
+                    onClick = { showAddGoalDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessAccent),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp).testTag("tambah_tabungan_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(12.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Pos Baru", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
 
         if (goals.isEmpty()) {
@@ -1755,7 +2437,7 @@ fun TabunganDaruratTab(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(goal.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Box(
@@ -1781,13 +2463,31 @@ fun TabunganDaruratTab(
                         }
                     }
 
-                    Text(
-                        text = "${((goal.currentAmount / goal.targetAmount) * 100).toInt()}%",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = SuccessAccent
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(
+                            onClick = { showEditGoalDialog = goal },
+                            modifier = Modifier.size(24.dp).testTag("edit_saving_btn_${goal.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Target Tabungan",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        val pct = if (goal.targetAmount > 0) ((goal.currentAmount / goal.targetAmount) * 100).toInt() else 0
+                        Text(
+                            text = "$pct%",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = SuccessAccent
+                        )
+                    }
                 }
 
                 // Progress Bar
@@ -2343,6 +3043,201 @@ fun TabunganDaruratTab(
                     activeContributionGoalId = null
                     customContributionAmount = ""
                 }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    if (showAddGoalDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddGoalDialog = false },
+            containerColor = BgCard,
+            title = { Text("Pos Tabungan Baru 🎯", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = newGoalName,
+                        onValueChange = { newGoalName = it },
+                        label = { Text("Nama Rencana Tabungan") },
+                        placeholder = { Text("Contoh: DP Rumah Ideal") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("new_saving_name_input")
+                    )
+                    OutlinedTextField(
+                        value = newGoalTargetAmount,
+                        onValueChange = { newGoalTargetAmount = it.filter { c -> c.isDigit() } },
+                        label = { Text("Target Nominal (Rp)") },
+                        placeholder = { Text("Contoh: 15000000") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("new_saving_target_input")
+                    )
+                    OutlinedTextField(
+                        value = newGoalCurrentAmount,
+                        onValueChange = { newGoalCurrentAmount = it.filter { c -> c.isDigit() } },
+                        label = { Text("Saldo / Setoran Awal (Rp)") },
+                        placeholder = { Text("Contoh: 500000") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("new_saving_current_input")
+                    )
+                    
+                    // Owner choices
+                    Column {
+                        Text("Kepemilikan Pos:", fontSize = 10.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(
+                                Triple("HAIKAL", haikalName, HaikalAccent),
+                                Triple("UMMU", ummuName, UmmuAccent),
+                                Triple("BERDUA", "Joint", CombinedAccent)
+                            ).forEach { (ownerKey, nameStr, colorTheme) ->
+                                val active = newGoalOwner == ownerKey
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (active) colorTheme.copy(alpha = 0.2f) else BgDeep)
+                                        .border(1.dp, if (active) colorTheme else BorderColor, RoundedCornerShape(8.dp))
+                                        .clickable { newGoalOwner = ownerKey }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(nameStr, fontSize = 10.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal, color = if (active) TextPrimary else TextSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = newGoalTargetAmount.toDoubleOrNull() ?: 0.0
+                        val current = newGoalCurrentAmount.toDoubleOrNull() ?: 0.0
+                        if (newGoalName.isNotBlank() && target > 0) {
+                            viewModel.insertCustomSavingGoal(newGoalName, target, current, newGoalOwner)
+                            showAddGoalDialog = false
+                            newGoalName = ""
+                            newGoalTargetAmount = ""
+                            newGoalCurrentAmount = ""
+                        } else {
+                            Toast.makeText(context, "Harap isi nama dan target nominal!", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = SuccessAccent)
+                ) {
+                    Text("Buat Pos")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddGoalDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    if (showEditGoalDialog != null) {
+        val editingGoal = showEditGoalDialog!!
+        AlertDialog(
+            onDismissRequest = { showEditGoalDialog = null },
+            containerColor = BgCard,
+            title = { Text("Edit Target & Saldo Tabungan 🎯", fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = editGoalName,
+                        onValueChange = { editGoalName = it },
+                        label = { Text("Nama Rencana Tabungan") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_saving_name_input")
+                    )
+                    OutlinedTextField(
+                        value = editGoalTargetAmount,
+                        onValueChange = { editGoalTargetAmount = it.filter { c -> c.isDigit() } },
+                        label = { Text("Target Nominal (Rp)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_saving_target_input")
+                    )
+                    OutlinedTextField(
+                        value = editGoalCurrentAmountState,
+                        onValueChange = { editGoalCurrentAmountState = it.filter { c -> c.isDigit() } },
+                        label = { Text("Saldo Tabungan Saat Ini (Rp)") },
+                        placeholder = { Text("Koreksi saldo langsung") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("edit_saving_current_input")
+                    )
+                    
+                    // Owner choices
+                    Column {
+                        Text("Kepemilikan Pos:", fontSize = 10.sp, color = TextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(
+                                Triple("HAIKAL", haikalName, HaikalAccent),
+                                Triple("UMMU", ummuName, UmmuAccent),
+                                Triple("BERDUA", "Joint", CombinedAccent)
+                            ).forEach { (ownerKey, nameStr, colorTheme) ->
+                                val active = editGoalOwner == ownerKey
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (active) colorTheme.copy(alpha = 0.2f) else BgDeep)
+                                        .border(1.dp, if (active) colorTheme else BorderColor, RoundedCornerShape(8.dp))
+                                        .clickable { editGoalOwner = ownerKey }
+                                        .padding(vertical = 8.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(nameStr, fontSize = 10.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal, color = if (active) TextPrimary else TextSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            viewModel.deleteSavingGoal(editingGoal.id)
+                            showEditGoalDialog = null
+                            Toast.makeText(context, "Pos Tabungan berhasil dihapus", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = DangerAccent)
+                    ) {
+                        Text("Hapus Pos", fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            val target = editGoalTargetAmount.toDoubleOrNull() ?: 0.0
+                            val current = editGoalCurrentAmountState.toDoubleOrNull() ?: 0.0
+                            if (editGoalName.isNotBlank() && target > 0) {
+                                viewModel.updateCustomSavingGoal(editingGoal.id, editGoalName, target, current, editGoalOwner)
+                                showEditGoalDialog = null
+                                Toast.makeText(context, "Pos Tabungan berhasil disimpan", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Harap isi nama dan target nominal!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SuccessAccent)
+                    ) {
+                        Text("Simpan", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditGoalDialog = null }) {
                     Text("Batal")
                 }
             }
@@ -4215,7 +5110,10 @@ fun ProfilSettingsScreen(
                 if (isAutoSyncEnabled) {
                     OutlinedTextField(
                         value = syncKey,
-                        onValueChange = { syncKey = it },
+                        onValueChange = { 
+                            syncKey = it 
+                            viewModel.saveConfigValue("SYNC_KEY", it)
+                        },
                         label = { Text("Kunci Sinkronisasi Bersama") },
                         placeholder = { Text("Contoh: haikal_ummu_selamanya") },
                         supportingText = {
@@ -4239,6 +5137,7 @@ fun ProfilSettingsScreen(
                             onClick = {
                                 val generatedKey = "hk_um_love_" + (1000..9999).random()
                                 syncKey = generatedKey
+                                viewModel.saveConfigValue("SYNC_KEY", generatedKey)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BgDeep),
                             border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
@@ -4383,7 +5282,10 @@ fun ProfilSettingsScreen(
                 if (isSheetsAutoEnabled) {
                     OutlinedTextField(
                         value = sheetsUrl,
-                        onValueChange = { sheetsUrl = it },
+                        onValueChange = { 
+                            sheetsUrl = it 
+                            viewModel.saveConfigValue("SHEETS_WEBAPP_URL", it)
+                        },
                         label = { Text("Google Apps Script Web App URL") },
                         placeholder = { Text("https://script.google.com/macros/s/.../exec") },
                         supportingText = {
@@ -4639,89 +5541,6 @@ fun ProfilSettingsScreen(
                         Text("Ekspor Jurnal", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-            }
-        }
-
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CombinedAccent.copy(alpha = 0.05f))
-                    .border(2.dp, CombinedAccent.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = CombinedAccent, modifier = Modifier.size(18.dp))
-                    Text(
-                        text = "ℹ️ Spesifikasi & Verifikasi APK Utama",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = CombinedAccent
-                    )
-                }
-                
-                Text(
-                    text = "Aplikasi DUNIA dibangun dengan arsitektur penuh (Full Native Kotlin Jetpack Compose & SQLite Room). Ini bukan aplikasi web ringkas, melainkan sebuah sistem sinergi finansial komprehensif berskala rilis.",
-                    fontSize = 10.sp,
-                    color = TextSecondary,
-                    lineHeight = 14.sp
-                )
-                
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(BgCard)
-                        .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
-                        .padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Ukuran Berkas APK Resmi:", fontSize = 9.5.sp, color = TextSecondary)
-                        Text("19.1 MB (~20 MB) - FULL SDK", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = SuccessAccent)
-                    }
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Database Lokal:", fontSize = 9.5.sp, color = TextSecondary)
-                        Text("SQLite (Room Engine v3)", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                    }
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Kecerdasan Buatan:", fontSize = 9.5.sp, color = TextSecondary)
-                        Text("Gemini 1.5 Pro AI Engine", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                    }
-                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Metode Sinkronisasi:", fontSize = 9.5.sp, color = TextSecondary)
-                        Text("P2P Cloud & Sheets Sync Real-time", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                    }
-                }
-                
-                Text(
-                    text = "⚠️ Jika Anda mengunduh ZIP Proyek dari Google AI Studio, berkas tersebut berukuran sekitar 4.6 MB karena HANYA berupa naskah kode sumber (source code) mentah Kotlin. Untuk memasang aplikasi utuhnya langsung di HP Android Anda, harap klik menu 'Export/Build APK' di panel atas atau unduh rilis resmi siap pakai dari GitHub Actions.",
-                    fontSize = 9.sp,
-                    color = WarningAccent,
-                    lineHeight = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
             }
         }
 

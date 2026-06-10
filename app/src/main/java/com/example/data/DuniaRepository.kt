@@ -28,12 +28,17 @@ class DuniaRepository(private val dao: DuniaDao) {
         dao.insertConfig(ConfigEntity(key, value))
     }
 
+    suspend fun deleteConfig(key: String) {
+        dao.deleteConfigByKey(key)
+    }
+
     suspend fun insertTransaction(transaction: TransactionEntity) = dao.insertTransaction(transaction)
     suspend fun updateTransaction(transaction: TransactionEntity) = dao.updateTransaction(transaction)
     suspend fun deleteTransaction(transaction: TransactionEntity) = dao.deleteTransaction(transaction)
 
     suspend fun insertSavingGoal(goal: SavingGoalEntity) = dao.insertSavingGoal(goal)
     suspend fun updateSavingGoal(goal: SavingGoalEntity) = dao.updateSavingGoal(goal)
+    suspend fun deleteSavingGoal(goal: SavingGoalEntity) = dao.deleteSavingGoal(goal)
 
     suspend fun insertCicilan(cicilan: CicilanEntity) = dao.insertCicilan(cicilan)
     suspend fun updateCicilan(cicilan: CicilanEntity) = dao.updateCicilan(cicilan)

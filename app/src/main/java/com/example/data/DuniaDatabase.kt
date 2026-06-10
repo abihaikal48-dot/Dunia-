@@ -136,6 +136,9 @@ interface DuniaDao {
     @Update
     suspend fun updateSavingGoal(goal: SavingGoalEntity)
 
+    @Delete
+    suspend fun deleteSavingGoal(goal: SavingGoalEntity)
+
     // Cicilan
     @Query("SELECT * FROM cicilan")
     fun getAllCicilan(): Flow<List<CicilanEntity>>
@@ -211,6 +214,9 @@ interface DuniaDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertConfigs(configs: List<ConfigEntity>)
+
+    @Query("DELETE FROM sys_config WHERE `key` = :key")
+    suspend fun deleteConfigByKey(key: String)
 
     @Query("DELETE FROM transactions")
     suspend fun clearTransactions()

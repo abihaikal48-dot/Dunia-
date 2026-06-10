@@ -1,5 +1,3 @@
-import java.util.Base64
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -10,12 +8,12 @@ plugins {
 
 android {
   namespace = "com.example"
-  compileSdk = 35
+  compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
     applicationId = "com.aistudio.dunia.hkum26"
     minSdk = 24
-    targetSdk = 35
+    targetSdk = 36
     versionCode = 1
     versionName = "1.0"
 
@@ -23,24 +21,6 @@ android {
   }
 
   signingConfigs {
-    // Decode debug.keystore from base64 if not present
-    val debugKeystoreFile = File(rootDir, "debug.keystore")
-    if (!debugKeystoreFile.exists()) {
-      val base64File = File(rootDir, "debug.keystore.base64")
-      if (base64File.exists()) {
-        try {
-          val cleanBase64 = base64File.readText().replace("\\s".toRegex(), "")
-          val bytes = Base64.getDecoder().decode(cleanBase64)
-          debugKeystoreFile.writeBytes(bytes)
-          println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY TO ${debugKeystoreFile.absolutePath} =====")
-        } catch (e: Exception) {
-          println("ERROR: Failed to decode debug.keystore: ${e.message}")
-        }
-      } else {
-        println("ERROR: debug.keystore.base64 does not exist at ${base64File.absolutePath}")
-      }
-    }
-
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
@@ -49,7 +29,7 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = File(rootDir, "debug.keystore")
+      storeFile = file("${rootDir}/debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
@@ -138,55 +118,4 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
-}
-
-tasks.register("copyDebugApk") {
-  val buildDir = layout.buildDirectory
-  val rootDirFile = rootDir
-  doLast {
-    val apkFile = buildDir.file("outputs/apk/debug/app-debug.apk").get().asFile
-    println("===== APK COPY DEBUGGING =====")
-    println("Source file: ${apkFile.absolutePath}")
-    println("Source exists: ${apkFile.exists()}")
-    if (apkFile.exists()) {
-      println("Source size: ${apkFile.length()} bytes")
-      val destFile = File(rootDirFile, "DUNIA-Mitra-App-Debug.apk")
-      apkFile.copyTo(destFile, overwrite = true)
-      println("Saved to: ${destFile.absolutePath}")
-      println("Destination size: ${destFile.length()} bytes")
-    } else {
-      println("ERROR: Source app-debug.apk does not exist!")
-    }
-    println("==============================")
-  }
-}
-
-tasks.register("decodeDebugKeystore") {
-  val base64File = File(rootDir, "debug.keystore.base64")
-  val debugKeystoreFile = File(rootDir, "debug.keystore")
-  inputs.file(base64File)
-  outputs.file(debugKeystoreFile)
-  doLast {
-    if (base64File.exists()) {
-      try {
-        val cleanBase64 = base64File.readText().replace("\\s".toRegex(), "")
-        val bytes = Base64.getDecoder().decode(cleanBase64)
-        debugKeystoreFile.writeBytes(bytes)
-        println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY TO ${debugKeystoreFile.absolutePath} ==================")
-      } catch (e: Exception) {
-        println("ERROR: Failed to decode debug.keystore: ${e.message}")
-        }
-    } else {
-      println("ERROR: debug.keystore.base64 does not exist at ${base64File.absolutePath}")
-    }
-  }
-}
-
-tasks.configureEach {
-  if (name == "assembleDebug") {
-    finalizedBy("copyDebugApk")
-  }
-  if (name == "assembleDebug" || name.startsWith("compileDebug") || name.startsWith("preDebugBuild") || name == "preBuild" || name.startsWith("ksp")) {
-    dependsOn("decodeDebugKeystore")
-  }
 }

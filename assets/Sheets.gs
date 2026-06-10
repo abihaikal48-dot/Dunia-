@@ -55,6 +55,11 @@ function doPost(e) {
       result = syncDatabaseFromAndroid(postData.data);
     } else if (action === "insert_transaction") {
       result = addTransactionDirect(postData.data);
+    } else if (action === "push_cloud_sync") {
+      var syncKey = postData.syncKey || "default_sync";
+      var envelopeStr = JSON.stringify(postData.envelope);
+      PropertiesService.getScriptProperties().setProperty("sync_db_" + syncKey, envelopeStr);
+      result = { success: true, message: "Sync envelope uploaded successfully!" };
     } else {
       result.message = "Aksi tidak dikenali";
     }
@@ -74,8 +79,15 @@ function doGet(e) {
   try {
     initializeSheets();
     var action = e.parameter.action;
-    var data = {};
     
+    if (action === "pull_cloud_sync") {
+      var syncKey = e.parameter.syncKey || "default_sync";
+      var payloadStr = PropertiesService.getScriptProperties().getProperty("sync_db_" + syncKey) || "{}";
+      return ContentService.createTextOutput(payloadStr)
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    var data = {};
     if (action === "get_all") {
       data = getAllDatabaseState();
     }

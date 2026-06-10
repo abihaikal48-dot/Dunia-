@@ -80,6 +80,63 @@ object DuniaSyncClient {
     }
 
     /**
+     * Uploads the synced envelope JSON to Google Sheets Web App.
+     */
+    suspend fun uploadSyncEnvelopeToGAS(webAppUrl: String, syncKey: String, envelopeJsonStr: String): Boolean = withContext(Dispatchers.IO) {
+        if (webAppUrl.isBlank()) return@withContext false
+        val mediaType = "application/json".toMediaTypeOrNull()
+        val payload = org.json.JSONObject().apply {
+            put("action", "push_cloud_sync")
+            put("syncKey", syncKey)
+            put("envelope", org.json.JSONObject(envelopeJsonStr))
+        }
+        val body = payload.toString().toRequestBody(mediaType)
+        val request = Request.Builder()
+            .url(webAppUrl)
+            .post(body)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
+     * Downloads the latest synced envelope JSON from Google Sheets Web App.
+     */
+    suspend fun fetchSyncEnvelopeFromGAS(webAppUrl: String, syncKey: String): String? = withContext(Dispatchers.IO) {
+        if (webAppUrl.isBlank() || syncKey.isBlank()) return@withContext null
+        val encodedKey = java.net.URLEncoder.encode(syncKey, "UTF-8")
+        val url = "$webAppUrl?action=pull_cloud_sync&syncKey=$encodedKey"
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string()
+                    // If return is empty or default empty brackets, return null so it doesn't try to parse empty object
+                    if (bodyStr == "{}" || bodyStr.isNullOrBlank()) {
+                        null
+                    } else {
+                        bodyStr
+                    }
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
      * Transmits the current database snapshot directly to the Google Apps Script Web App URL.
      */
     suspend fun syncWithGoogleSheets(webAppUrl: String, jsonDbContent: String): Boolean = withContext(Dispatchers.IO) {

@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "DUNIA"
+rootProject.name = "My Application"
 
 include(":app")

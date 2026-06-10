@@ -133,14 +133,51 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
             .groupBy { it.category }
             .mapValues { entry -> entry.value.sumOf { it.amount } }
 
-        // Budget checking
-        val budgetMakanHaikal = configData["BUDGET_MAKAN_HAIKAL"]?.toDoubleOrNull() ?: 450000.0
-        val budgetTransportHaikal = configData["BUDGET_TRANSPORT"]?.toDoubleOrNull() ?: 150000.0
-        val budgetKencan = configData["BUDGET_KENCAN"]?.toDoubleOrNull() ?: 200000.0
+        // Parse dynamic budget goals from configs
+        val haikalName = configData["NAMA_HAIKAL"] ?: "Haikal"
+        val ummuName = configData["NAMA_UMMU"] ?: "Ummu"
 
-        val actualMakan = monthTx.filter { it.type == "PENGELUARAN" && it.category == "Makan & Jajan" && it.user == "HAIKAL" }.sumOf { it.amount }
-        val actualTransport = monthTx.filter { it.type == "PENGELUARAN" && it.category == "Transportasi" && it.user == "HAIKAL" }.sumOf { it.amount }
-        val actualKencan = monthTx.filter { it.type == "PENGELUARAN" && it.category == "Kencan" }.sumOf { it.amount }
+        val dynamicBudgets = mutableListOf<BudgetStatus>()
+        configData.forEach { (key, value) ->
+            if (key.startsWith("BUDGET_GOAL:")) {
+                val parts = key.split(":")
+                if (parts.size >= 3) {
+                    val categoryName = parts[1]
+                    val owner = parts[2]
+                    val limitAmt = value.toDoubleOrNull() ?: 0.0
+
+                    if (limitAmt > 0.0) {
+                        val actualAmt = monthTx.filter { tx ->
+                            tx.type == "PENGELUARAN" &&
+                            tx.category.trim().lowercase() == categoryName.trim().lowercase() &&
+                            (owner == "BERDUA" || tx.user == owner)
+                        }.sumOf { it.amount }
+
+                        val displayOwner = if (owner == "HAIKAL") " ($haikalName)" else if (owner == "UMMU") " ($ummuName)" else " (Bersama)"
+                        dynamicBudgets.add(BudgetStatus(categoryName + displayOwner, actualAmt, limitAmt, categoryName, owner))
+                    }
+                }
+            }
+        }
+
+        // Fallback to seeded budgets if no custom dynamic budgets are present
+        val finalBudgetAlerts = if (dynamicBudgets.isNotEmpty()) {
+            dynamicBudgets
+        } else {
+            val budgetMakanHaikal = configData["BUDGET_MAKAN_HAIKAL"]?.toDoubleOrNull() ?: 450000.0
+            val budgetTransportHaikal = configData["BUDGET_TRANSPORT"]?.toDoubleOrNull() ?: 150000.0
+            val budgetKencan = configData["BUDGET_KENCAN"]?.toDoubleOrNull() ?: 200000.0
+
+            val actualMakan = monthTx.filter { it.type == "PENGELUARAN" && (it.category == "Makan & Jajan" || it.category == "Makan, Sembako & Jajan") && it.user == "HAIKAL" }.sumOf { it.amount }
+            val actualTransport = monthTx.filter { it.type == "PENGELUARAN" && (it.category == "Transportasi" || it.category == "Transportasi & Bensin") && it.user == "HAIKAL" }.sumOf { it.amount }
+            val actualKencan = monthTx.filter { it.type == "PENGELUARAN" && (it.category == "Kencan" || it.category == "Anggaran Kencan / Berdua") }.sumOf { it.amount }
+
+            listOf(
+                BudgetStatus("Makan $haikalName", actualMakan, budgetMakanHaikal, "Makan, Sembako & Jajan", "HAIKAL"),
+                BudgetStatus("Transport $haikalName", actualTransport, budgetTransportHaikal, "Transportasi & Bensin", "HAIKAL"),
+                BudgetStatus("Kencan Bersama", actualKencan, budgetKencan, "Anggaran Kencan / Berdua", "BERDUA")
+            )
+        }
 
         MonthlyOverview(
             haikalIncome = haikalIncome,
@@ -153,11 +190,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
             totalExpense = totalExpense,
             surplus = surplus,
             categoryBreakdown = categoryBreakdown,
-            budgetAlerts = listOf(
-                BudgetStatus("Makan Haikal", actualMakan, budgetMakanHaikal),
-                BudgetStatus("Transport Haikal", actualTransport, budgetTransportHaikal),
-                BudgetStatus("Kencan Bersama", actualKencan, budgetKencan)
-            )
+            budgetAlerts = finalBudgetAlerts
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MonthlyOverview())
 
@@ -313,6 +346,45 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
         }
     }
 
+    fun insertCustomSavingGoal(name: String, targetAmount: Double, currentAmount: Double, owner: String) {
+        viewModelScope.launch {
+            repository.insertSavingGoal(
+                com.example.data.SavingGoalEntity(
+                    id = 0,
+                    name = name,
+                    targetAmount = targetAmount,
+                    currentAmount = currentAmount,
+                    owner = owner
+                )
+            )
+        }
+    }
+
+    fun updateCustomSavingGoal(goalId: Int, name: String, targetAmount: Double, currentAmount: Double, owner: String) {
+        viewModelScope.launch {
+            val goal = savingGoals.value.find { it.id == goalId }
+            if (goal != null) {
+                repository.updateSavingGoal(
+                    goal.copy(
+                        name = name,
+                        targetAmount = targetAmount,
+                        currentAmount = currentAmount,
+                        owner = owner
+                    )
+                )
+            }
+        }
+    }
+
+    fun deleteSavingGoal(goalId: Int) {
+        viewModelScope.launch {
+            val goal = savingGoals.value.find { it.id == goalId }
+            if (goal != null) {
+                repository.deleteSavingGoal(goal)
+            }
+        }
+    }
+
     fun payCicilan(cicilanId: Int) {
         viewModelScope.launch {
             val cicilanObj = cicilanList.value.find { it.id == cicilanId }
@@ -412,6 +484,18 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
     fun saveConfigValue(key: String, value: String) {
         viewModelScope.launch {
             repository.saveConfig(key, value)
+        }
+    }
+
+    fun saveBudgetGoal(category: String, owner: String, limit: Double) {
+        viewModelScope.launch {
+            repository.saveConfig("BUDGET_GOAL:$category:$owner", limit.toString())
+        }
+    }
+
+    fun deleteBudgetGoal(category: String, owner: String) {
+        viewModelScope.launch {
+            repository.deleteConfig("BUDGET_GOAL:$category:$owner")
         }
     }
 
@@ -876,7 +960,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
                                     category = obj.getString("category"),
                                     description = obj.getString("description"),
                                     tag = obj.getString("tag"),
-                                    imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri")?.takeIf { it.isNotEmpty() }
+                                    imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri", null)
                                 )
                             )
                         }
@@ -1020,7 +1104,12 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
                 put("db", org.json.JSONObject(rawDbJson))
             }
 
-            val success = com.example.api.DuniaSyncClient.uploadSyncEnvelope(syncKey, envelope.toString())
+            val sheetsUrl = configs.value["SHEETS_WEBAPP_URL"] ?: ""
+            val success = if (sheetsUrl.isNotBlank()) {
+                com.example.api.DuniaSyncClient.uploadSyncEnvelopeToGAS(sheetsUrl, syncKey, envelope.toString())
+            } else {
+                com.example.api.DuniaSyncClient.uploadSyncEnvelope(syncKey, envelope.toString())
+            }
             isSyncingNetwork = false
 
             if (success) {
@@ -1042,12 +1131,17 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
     private fun startCloudPolling() {
         viewModelScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(10000) // Poll every 10 seconds
+                kotlinx.coroutines.delay(5000) // Poll every 5 seconds for sub-decasecond mirror sync
                 val syncKey = configs.value["SYNC_KEY"] ?: ""
                 val autoEnabled = configs.value["SYNC_AUTO_ENABLED"] == "true"
                 if (syncKey.isNotBlank() && autoEnabled && !isSyncingNetwork) {
                     try {
-                        val envelopeStr = com.example.api.DuniaSyncClient.fetchSyncEnvelope(syncKey)
+                        val sheetsUrl = configs.value["SHEETS_WEBAPP_URL"] ?: ""
+                        val envelopeStr = if (sheetsUrl.isNotBlank()) {
+                            com.example.api.DuniaSyncClient.fetchSyncEnvelopeFromGAS(sheetsUrl, syncKey)
+                        } else {
+                            com.example.api.DuniaSyncClient.fetchSyncEnvelope(syncKey)
+                        }
                         if (!envelopeStr.isNullOrBlank()) {
                             val envelope = org.json.JSONObject(envelopeStr)
                             val senderId = envelope.optString("sender_id")
@@ -1111,7 +1205,9 @@ data class MonthlyOverview(
 data class BudgetStatus(
     val posName: String,
     val actual: Double,
-    val budget: Double
+    val budget: Double,
+    val category: String = "",
+    val owner: String = ""
 )
 
 data class HealthScore(
