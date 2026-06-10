@@ -10,7 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +26,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,11 +65,12 @@ class MainActivity : ComponentActivity() {
         // Init databases and repositories on IO scope
         val db = DuniaDatabase.getDatabase(applicationContext, lifecycleScope)
         val repository = DuniaRepository(db.duniaDao())
-        val vmFactory = DuniaViewModelFactory(repository)
+        val vmFactory = DuniaViewModelFactory(repository, application)
 
         setContent {
-            MyApplicationTheme {
-                val viewModel: DuniaViewModel = viewModel(factory = vmFactory)
+            val viewModel: DuniaViewModel = viewModel(factory = vmFactory)
+            val isDark by viewModel.isDarkMode.collectAsState()
+            MyApplicationTheme(darkTheme = isDark) {
                 MainScreenShell(viewModel)
             }
         }
@@ -76,6 +80,229 @@ class MainActivity : ComponentActivity() {
 // ==========================================
 // CENTRAL NAVIGATION & UI SHELL
 // ==========================================
+
+@Composable
+fun PremiumDuniaLogoCanvas(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "LogoOrbit")
+    val rotationAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "OrbitRotation"
+    )
+    val glowScale by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "GlowScale"
+    )
+
+    androidx.compose.foundation.Canvas(modifier = modifier.size(100.dp)) {
+        val width = size.width
+        val height = size.height
+        val center = androidx.compose.ui.geometry.Offset(width / 2f, height / 2f)
+        val outerRadius = width * 0.42f
+        val innerRadius = width * 0.30f
+
+        // Draw deep ambient glow behind the globe
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0xFF3B82F6).copy(alpha = 0.3f * glowScale),
+                    Color(0xFF60A5FA).copy(alpha = 0.05f),
+                    Color.Transparent
+                ),
+                center = center,
+                radius = outerRadius * 1.5f
+            )
+        )
+
+        // Draw Globe Boundary
+        drawCircle(
+            color = Color(0xFF3B82F6).copy(alpha = 0.15f),
+            radius = innerRadius,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Fill
+        )
+        drawCircle(
+            color = Color(0xFF60A5FA).copy(alpha = 0.8f),
+            radius = innerRadius,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+        )
+
+        // Latitude & Longitude grid lines
+        // Equator
+        drawLine(
+            color = Color(0xFF60A5FA).copy(alpha = 0.5f),
+            start = androidx.compose.ui.geometry.Offset(center.x - innerRadius, center.y),
+            end = androidx.compose.ui.geometry.Offset(center.x + innerRadius, center.y),
+            strokeWidth = 1.5.dp.toPx()
+        )
+        // Meridian
+        drawLine(
+            color = Color(0xFF60A5FA).copy(alpha = 0.5f),
+            start = androidx.compose.ui.geometry.Offset(center.x, center.y - innerRadius),
+            end = androidx.compose.ui.geometry.Offset(center.x, center.y + innerRadius),
+            strokeWidth = 1.5.dp.toPx()
+        )
+
+        // Curved longitudinal grid curves
+        drawOval(
+            color = Color(0xFF60A5FA).copy(alpha = 0.35f),
+            topLeft = androidx.compose.ui.geometry.Offset(center.x - innerRadius * 0.5f, center.y - innerRadius),
+            size = androidx.compose.ui.geometry.Size(innerRadius, innerRadius * 2f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+        )
+
+        // Stunning high-tech gold orbital ring
+        rotate(degrees = rotationAngle, pivot = center) {
+            drawOval(
+                brush = Brush.sweepGradient(
+                    colors = listOf(
+                        Color(0xFFF59E0B), // Gold
+                        Color(0xFFEF4444), // Red
+                        Color(0xFF3B82F6), // Blue
+                        Color(0xFFFBBF24), // Amber
+                        Color(0xFFF59E0B)  // Gold
+                    ),
+                    center = center
+                ),
+                topLeft = androidx.compose.ui.geometry.Offset(center.x - outerRadius * 1.15f, center.y - outerRadius * 0.35f),
+                size = androidx.compose.ui.geometry.Size(outerRadius * 2.3f, outerRadius * 0.7f),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5.dp.toPx())
+            )
+
+            // Orbiting satellite star
+            val orbitX = center.x + outerRadius * 1.15f * kotlin.math.cos(0f)
+            val orbitY = center.y + outerRadius * 0.35f * kotlin.math.sin(0f)
+            
+            drawCircle(
+                color = Color(0xFFFBBF24),
+                radius = 5.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(orbitX, orbitY)
+            )
+            drawCircle(
+                color = Color(0xFFF59E0B).copy(alpha = 0.5f),
+                radius = 9.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(orbitX, orbitY)
+            )
+        }
+
+        // Concentric Core Star representing "Wealth"
+        drawCircle(
+            color = Color.White,
+            radius = 4.dp.toPx(),
+            center = center
+        )
+    }
+}
+
+@Composable
+fun DuniaBootPreloader(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A),
+                        Color(0xFF1E293B)
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(320.dp)
+                .drawBehind {
+                    drawCircle(
+                        color = Color(0xFF3B82F6).copy(alpha = 0.08f),
+                        radius = size.maxDimension / 2f
+                    )
+                }
+        )
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(28.dp),
+            modifier = Modifier
+                .padding(32.dp)
+                .widthIn(max = 400.dp)
+        ) {
+            PremiumDuniaLogoCanvas(
+                modifier = Modifier.size(110.dp)
+            )
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "D U N I A",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 4.sp
+                )
+                Text(
+                    text = "Dual Universe of Needs, Income & Aspirations",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.04f))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFF3B82F6),
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(36.dp)
+                    )
+
+                    Text(
+                        text = message,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = FontFamily.SansSerif,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+
+            Text(
+                text = "Menyelaraskan portal keuangan Haikal & Ummu...",
+                color = Color(0xFF64748B),
+                fontSize = 10.sp,
+                textAlign = TextAlign.Center,
+                fontWeight = FontWeight.Normal
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -94,12 +321,18 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
     val systemMap by viewModel.configs.collectAsState()
     val healthState by viewModel.financialHealthScore.collectAsState()
 
+    val isBootSyncing by viewModel.isBootSyncing.collectAsState()
+    val bootSyncMessage by viewModel.bootSyncMessage.collectAsState()
+
     // Grab custom dynamic titles
     val haikalName = systemMap["NAMA_HAIKAL"] ?: "Haikal"
     val ummuName = systemMap["NAMA_UMMU"] ?: "Ummu"
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
+    if (isBootSyncing) {
+        DuniaBootPreloader(bootSyncMessage)
+    } else {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
         containerColor = BgDeep,
         bottomBar = {
             // Elegant scrolling bottom bar for wide mobile compatibility
@@ -217,7 +450,30 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
                 AnimatedContent(
                     targetState = selectedTab,
                     transitionSpec = {
-                        fadeIn(animationSpec = spring()) togetherWith fadeOut(animationSpec = spring())
+                    val slideDirection = if (targetState > initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Left
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.Right
+                    }
+                        (slideIntoContainer(
+                            towards = slideDirection,
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 350, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                        ) + fadeIn(
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 280)
+                        ) + scaleIn(
+                            initialScale = 0.96f,
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 280)
+                        )).togetherWith(
+                            slideOutOfContainer(
+                                towards = slideDirection,
+                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 350, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                            ) + fadeOut(
+                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 150)
+                            ) + scaleOut(
+                                targetScale = 0.96f,
+                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 150)
+                            )
+                        )
                     },
                     label = "TabContent"
                 ) { activeIndex ->
@@ -233,6 +489,7 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
                 }
             }
         }
+    }
     }
 }
 
@@ -1276,11 +1533,36 @@ fun KeuanganScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            when (screenState) {
-                0 -> CashflowLedgerTab(viewModel, haikalName, ummuName)
-                1 -> AnggaranBudgetTab(viewModel, haikalName, ummuName)
-                2 -> TabunganDaruratTab(viewModel, haikalName, ummuName)
-                3 -> CicilanHutangTab(viewModel)
+            AnimatedContent(
+                targetState = screenState,
+                transitionSpec = {
+                    val slideDirection = if (targetState > initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Left
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.Right
+                    }
+                    (slideIntoContainer(
+                        towards = slideDirection,
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ) + fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                    )).togetherWith(
+                        slideOutOfContainer(
+                            towards = slideDirection,
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                        ) + fadeOut(
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 150)
+                        )
+                    )
+                },
+                label = "KeuanganTabContent"
+            ) { activeState ->
+                when (activeState) {
+                    0 -> CashflowLedgerTab(viewModel, haikalName, ummuName)
+                    1 -> AnggaranBudgetTab(viewModel, haikalName, ummuName)
+                    2 -> TabunganDaruratTab(viewModel, haikalName, ummuName)
+                    3 -> CicilanHutangTab(viewModel)
+                }
             }
         }
     }
@@ -1289,6 +1571,200 @@ fun KeuanganScreen(
 // ==========================================
 // SUB TAB: ANGGARAN & BUDGETING
 // ==========================================
+@Composable
+fun NeedsVsAspirationsDonutChart(
+    needsValue: Double,
+    aspirationsValue: Double,
+    needsPercent: Float,
+    aspirationsPercent: Float,
+    isRealData: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val drawPercent by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+        label = "DonutChartAnim"
+    )
+    val sweepNeeds = needsPercent * 360f * drawPercent
+    val sweepAspirations = aspirationsPercent * 360f * drawPercent
+
+    GlassMorphicCard(
+        modifier = modifier.fillMaxWidth(),
+        borderAccent = CombinedAccent.copy(alpha = 0.25f),
+        glowColor = CombinedAccent.copy(alpha = 0.03f)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Text(
+                        text = "Analisis Alokasi Keuangan (Needs vs Aspirations) 📊",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = if (isRealData) "Berdasarkan sasaran & riwayat transaksi aktif" else "Acuan Ideal: 60% Kebutuhan Pokok & 40% Keinginan Berdua",
+                        fontSize = 9.sp,
+                        color = TextSecondary
+                    )
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isRealData) SuccessAccent.copy(alpha = 0.15f) else CombinedAccent.copy(alpha = 0.1f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = if (isRealData) "Live Anggaran" else "Default Acuan",
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isRealData) SuccessAccent else CombinedAccent
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(110.dp)
+                ) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.size(90.dp)) {
+                        val strokeWidth = 11.dp.toPx()
+                        val diameter = size.minDimension - strokeWidth
+                        val rect = androidx.compose.ui.geometry.Rect(
+                            strokeWidth / 2f,
+                            strokeWidth / 2f,
+                            size.width - strokeWidth / 2f,
+                            size.height - strokeWidth / 2f
+                        )
+                        
+                        // Draw Needs segment in Sky Blue
+                        drawArc(
+                            color = Color(0xFF38BDF8),
+                            startAngle = -90f,
+                            sweepAngle = sweepNeeds,
+                            useCenter = false,
+                            style = Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                            size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
+                            topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top)
+                        )
+                        
+                        // Draw Aspirations segment in Rose Pink
+                        drawArc(
+                            color = Color(0xFFF472B6),
+                            startAngle = -90f + sweepNeeds,
+                            sweepAngle = sweepAspirations,
+                            useCenter = false,
+                            style = Stroke(width = strokeWidth, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                            size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
+                            topLeft = androidx.compose.ui.geometry.Offset(rect.left, rect.top)
+                        )
+                    }
+                    
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "ALOKASI",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMuted,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = formatRupiah(needsValue + aspirationsValue),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                    }
+                }
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 12.dp)
+                ) {
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF38BDF8)))
+                            Text(
+                                text = "Kebutuhan Pokok (Needs)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(1.dp))
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = formatRupiah(needsValue),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "(${(needsPercent * 100).toInt()}%)",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+                    }
+
+                    Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFF472B6)))
+                            Text(
+                                text = "Kurasi Aspirasi (Aspirations)",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(1.dp))
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = formatRupiah(aspirationsValue),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "(${(aspirationsPercent * 100).toInt()}%)",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFF472B6)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun AnggaranBudgetTab(
     viewModel: DuniaViewModel,
@@ -1315,6 +1791,34 @@ fun AnggaranBudgetTab(
     val totalActualSpent = stats.budgetAlerts.sumOf { it.actual }
     val overallPercentage = if (totalBudget > 0.0) (totalActualSpent / totalBudget).toFloat() else 0f
     val remainingBudgetTotal = (totalBudget - totalActualSpent).coerceAtLeast(0.0)
+
+    // Specific segments grouping for "Needs vs Aspirations" chart breakdown
+    val needsAlerts = stats.budgetAlerts.filter { 
+        val name = it.category
+        val needsSet = setOf(
+            "Sewa Rumah / Kost", "Tagihan Listrik, Air & Internet", "Transportasi & Bensin", 
+            "Makan, Sembako & Jajan", "Cicilan & Hutang Mandiri", "Kesehatan & Obat-obatan", 
+            "Pendidikan & Pengembangan Diri", "Kebutuhan Orang Tua / Keluarga"
+        )
+        name in needsSet || name.contains("Kebutuhan", ignoreCase = true) || name.contains("Hutang", ignoreCase = true) || name.contains("Cicilan", ignoreCase = true)
+    }
+    
+    val aspirationsAlerts = stats.budgetAlerts.filter { it !in needsAlerts }
+    
+    val needsSpent = needsAlerts.sumOf { it.actual }
+    val needsBudget = needsAlerts.sumOf { it.budget }
+    
+    val aspirationsSpent = aspirationsAlerts.sumOf { it.actual }
+    val aspirationsBudget = aspirationsAlerts.sumOf { it.budget }
+
+    val hasRealData = needsSpent > 0.0 || aspirationsSpent > 0.0 || needsBudget > 0.0 || aspirationsBudget > 0.0
+    val chartNeedsValue = if (needsSpent > 0.0) needsSpent else (if (needsBudget > 0.0) needsBudget else 3000000.0)
+    val chartAspirationsValue = if (aspirationsSpent > 0.0) aspirationsSpent else (if (aspirationsBudget > 0.0) aspirationsBudget else 2000000.0)
+
+    val needsPercentFraction = if (chartNeedsValue + chartAspirationsValue > 0.0) {
+        (chartNeedsValue / (chartNeedsValue + chartAspirationsValue)).toFloat()
+    } else 0.60f
+    val aspirationsPercentFraction = 1f - needsPercentFraction
 
     LazyColumn(
         modifier = Modifier
@@ -1440,6 +1944,17 @@ fun AnggaranBudgetTab(
                     )
                 }
             }
+        }
+
+        item {
+            NeedsVsAspirationsDonutChart(
+                needsValue = chartNeedsValue,
+                aspirationsValue = chartAspirationsValue,
+                needsPercent = needsPercentFraction,
+                aspirationsPercent = aspirationsPercentFraction,
+                isRealData = hasRealData,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         // Budget Items List
@@ -3958,10 +4473,35 @@ fun HarianSpiritualScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            if (subTabState == 0) {
-                JadwalHarianView(viewModel, haikalName, ummuName)
-            } else {
-                IbadahTrackerView(viewModel)
+            AnimatedContent(
+                targetState = subTabState,
+                transitionSpec = {
+                    val slideDirection = if (targetState > initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Left
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.Right
+                    }
+                    (slideIntoContainer(
+                        towards = slideDirection,
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ) + fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                    )).togetherWith(
+                        slideOutOfContainer(
+                            towards = slideDirection,
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                        ) + fadeOut(
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 150)
+                        )
+                    )
+                },
+                label = "HarianSpiritualTab"
+            ) { activeTab ->
+                if (activeTab == 0) {
+                    JadwalHarianView(viewModel, haikalName, ummuName)
+                } else {
+                    IbadahTrackerView(viewModel)
+                }
             }
         }
     }
@@ -4631,10 +5171,35 @@ fun RapatWishlistScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            if (partitionState == 0) {
-                RapatReviewsView(viewModel)
-            } else {
-                WishlistControlView(viewModel, haikalName, ummuName)
+            AnimatedContent(
+                targetState = partitionState,
+                transitionSpec = {
+                    val slideDirection = if (targetState > initialState) {
+                        AnimatedContentTransitionScope.SlideDirection.Left
+                    } else {
+                        AnimatedContentTransitionScope.SlideDirection.Right
+                    }
+                    (slideIntoContainer(
+                        towards = slideDirection,
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                    ) + fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+                    )).togetherWith(
+                        slideOutOfContainer(
+                            towards = slideDirection,
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                        ) + fadeOut(
+                            animationSpec = androidx.compose.animation.core.tween(durationMillis = 150)
+                        )
+                    )
+                },
+                label = "RapatWishlistTab"
+            ) { activePartition ->
+                if (activePartition == 0) {
+                    RapatReviewsView(viewModel)
+                } else {
+                    WishlistControlView(viewModel, haikalName, ummuName)
+                }
             }
         }
     }
@@ -5403,6 +5968,59 @@ fun ProfilSettingsScreen(
     ) {
         item {
             Text("⚙️ Pengaturan Profil DUNIA", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+        }
+
+        // FULL DARK MODE TOGGLE (Fulfills the "Buat toogle untuk dark mode full" request)
+        item {
+            val isDark by viewModel.isDarkMode.collectAsState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(BgCard)
+                    .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = if (isDark) "✨" else "💫",
+                            fontSize = 18.sp
+                        )
+                        Column {
+                            Text(
+                                text = "Mode Gelap Penuh 🌙",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Ubah seluruh tampilan aplikasi ke mode gelap",
+                                fontSize = 10.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = isDark,
+                        onCheckedChange = { enabled ->
+                            viewModel.saveConfigValue("DARK_MODE", if (enabled) "true" else "false")
+                        },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = CombinedAccent
+                        )
+                    )
+                }
+            }
         }
 
         // Haikal profile card editor

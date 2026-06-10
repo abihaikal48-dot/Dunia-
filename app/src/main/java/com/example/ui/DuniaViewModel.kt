@@ -17,7 +17,39 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
+class DuniaViewModel(
+    private val repository: DuniaRepository,
+    private val application: android.app.Application
+) : ViewModel() {
+
+    // --- BOOT-LOADING SYNC STATES ---
+    private val _isBootSyncing = MutableStateFlow(true)
+    val isBootSyncing: StateFlow<Boolean> = _isBootSyncing.asStateFlow()
+
+    private val _bootSyncMessage = MutableStateFlow("Sedang memuat data...")
+    val bootSyncMessage: StateFlow<String> = _bootSyncMessage.asStateFlow()
+
+    private var isImportingDatabase = false
+
+    private fun getLocalLastUpdated(): Long {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        return sharedPrefs.getLong("LOCAL_LAST_UPDATED", 0L)
+    }
+
+    private fun saveLocalLastUpdated(time: Long) {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        sharedPrefs.edit().putLong("LOCAL_LAST_UPDATED", time).apply()
+    }
+
+    private fun getPersistedHash(key: String): String {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        return sharedPrefs.getString(key, "") ?: ""
+    }
+
+    private fun savePersistedHash(key: String, hash: String) {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        sharedPrefs.edit().putString(key, hash).apply()
+    }
 
     // --- DIAGNOSTICS FOR CLOUD SYNC ---
     private val _sheetsDiagnosticResult = MutableStateFlow("")
@@ -104,10 +136,122 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
     val configs: StateFlow<Map<String, String>> = repository.configMap
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
+    val isDarkMode: StateFlow<Boolean> = repository.configMap
+        .map { map -> map["DARK_MODE"] == "true" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
     init {
+        localLastUpdated = getLocalLastUpdated()
+        lastFirebaseUploadedHash = getPersistedHash("FIREBASE_HASH")
+        lastSheetsUploadedHash = getPersistedHash("SHEETS_HASH")
+        lastUploadedHash = getPersistedHash("WEBAPP_HASH")
+
+        // Load the initial local database hash to avoid false auto-sync on collection startup
+        viewModelScope.launch {
+            // Give Room database a brief moment to load initial entities
+            kotlinx.coroutines.delay(100)
+            val initialDbJson = exportDatabaseAsJson()
+            if (initialDbJson.isNotEmpty()) {
+                lastLocalDBHashOfViewModel = com.example.api.DuniaSyncClient.hashSyncKey(initialDbJson)
+            }
+        }
+
         observeAndUploadOnChanges()
         startCloudPolling()
         startFirebaseCloudPolling()
+
+        // --- Firebase Cloud Sync Preloader Routine on Startup ---
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(300) // Small delay for Flow collections to prepare
+            val firebaseUrl = repository.getConfigValue("FIREBASE_URL") ?: ""
+            val firebaseEnabled = repository.getConfigValue("FIREBASE_AUTO_ENABLED") == "true"
+            val syncKey = repository.getConfigValue("SYNC_KEY") ?: ""
+            val authToken = repository.getConfigValue("FIREBASE_AUTH_TOKEN")
+
+            if (firebaseEnabled && firebaseUrl.isNotBlank() && syncKey.isNotBlank()) {
+                _bootSyncMessage.value = "Menghubungkan ke Google Firebase Cloud... ☁️"
+                _firebaseSyncStatus.value = "Menghubungkan..."
+                try {
+                    val envelopeStr = com.example.api.DuniaSyncClient.fetchSyncEnvelopeFromFirebase(firebaseUrl, syncKey, authToken)
+                    if (!envelopeStr.isNullOrBlank()) {
+                        val envelope = org.json.JSONObject(envelopeStr)
+                        val cloudLastUpdated = envelope.optLong("last_updated", 0L)
+                        val senderId = envelope.optString("sender_id")
+
+                        _bootSyncMessage.value = "Memeriksa keselarasan data Haikal & Ummu..."
+
+                        if (cloudLastUpdated > localLastUpdated) {
+                            _bootSyncMessage.value = "Mengunduh dan menerapkan pembaruan real-time terbaru... ⚡"
+                            val dbObj = envelope.optJSONObject("db")
+                            if (dbObj != null) {
+                                isImportingDatabase = true
+                                importDatabaseFromJson(dbObj.toString(), mergeOnly = false) { success ->
+                                    isImportingDatabase = false
+                                    if (success) {
+                                        localLastUpdated = cloudLastUpdated
+                                        saveLocalLastUpdated(cloudLastUpdated)
+                                        lastFirebaseUploadedHash = com.example.api.DuniaSyncClient.hashSyncKey(dbObj.toString())
+                                        savePersistedHash("FIREBASE_HASH", lastFirebaseUploadedHash)
+                                        lastLocalDBHashOfViewModel = lastFirebaseUploadedHash
+                                        _firebaseSyncStatus.value = "Tersinkronisasi ✅"
+                                        val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+                                        _lastFirebaseSyncTime.value = "Terima update ${sdf.format(Date())}"
+                                        _bootSyncMessage.value = "Sinkronisasi nirkabel berhasil! Membuka portal..."
+                                    } else {
+                                        _firebaseSyncStatus.value = "Gagal Sinkron ❌"
+                                        _bootSyncMessage.value = "Gagal menerapkan data, memulai offline..."
+                                    }
+                                }
+                            }
+                        } else if (localLastUpdated > cloudLastUpdated) {
+                            _bootSyncMessage.value = "Mengunggah perubahan offline teranyar ke Cloud... ⚡"
+                            val rawDbJson = exportDatabaseAsJson()
+                            if (rawDbJson.isNotEmpty()) {
+                                val currentHash = com.example.api.DuniaSyncClient.hashSyncKey(rawDbJson)
+                                val envelopeObj = org.json.JSONObject().apply {
+                                    put("last_updated", localLastUpdated)
+                                    put("sender_id", clientId)
+                                    put("db", org.json.JSONObject(rawDbJson))
+                                }
+                                val uploadSuccess = com.example.api.DuniaSyncClient.uploadSyncEnvelopeToFirebase(
+                                    firebaseUrl,
+                                    syncKey,
+                                    envelopeObj.toString(),
+                                    authToken
+                                )
+                                if (uploadSuccess) {
+                                    lastFirebaseUploadedHash = currentHash
+                                    savePersistedHash("FIREBASE_HASH", currentHash)
+                                    lastLocalDBHashOfViewModel = currentHash
+                                    _firebaseSyncStatus.value = "Tersinkronisasi ✅"
+                                    val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+                                    _lastFirebaseSyncTime.value = "Kirim update ${sdf.format(Date())}"
+                                    _bootSyncMessage.value = "Pembaruan cloud berhasil! Membuka portal..."
+                                } else {
+                                    _bootSyncMessage.value = "Gagal membarui cloud, melanjutkan offline..."
+                                }
+                            } else {
+                                _bootSyncMessage.value = "Membuka portal..."
+                            }
+                        } else {
+                            _bootSyncMessage.value = "Semua data lokal sudah up-to-date! Membuka portal..."
+                            _firebaseSyncStatus.value = "Tersinkronisasi ✅"
+                        }
+                    } else {
+                        _bootSyncMessage.value = "Cloud kosong. Mempersiapkan sinkronisasi portal baru..."
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    _bootSyncMessage.value = "Gagal terhubung ke cloud, melanjutkan secara offline..."
+                }
+            } else {
+                _bootSyncMessage.value = "Meluncurkan portal lokal..."
+                kotlinx.coroutines.delay(400)
+            }
+
+            kotlinx.coroutines.delay(500) // Soft premium transition delay
+            _isBootSyncing.value = false
+        }
     }
 
     // --- Dynamic UI State ---
@@ -820,6 +964,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
 
     fun importDatabaseFromJson(jsonStr: String, mergeOnly: Boolean, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
+            isImportingDatabase = true
             try {
                 val root = org.json.JSONObject(jsonStr)
 
@@ -1025,6 +1170,9 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 onComplete(false)
+            } finally {
+                kotlinx.coroutines.delay(1200)
+                isImportingDatabase = false
             }
         }
     }
@@ -1045,6 +1193,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
 
     // --- REAL-TIME CLOUD AUTO SYNC CONTROLLERS ---
     private var uploadJob: kotlinx.coroutines.Job? = null
+    private var lastLocalDBHashOfViewModel = ""
 
     private fun observeAndUploadOnChanges() {
         viewModelScope.launch {
@@ -1061,15 +1210,28 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
             ) { _ ->
                 System.currentTimeMillis()
             }.collect {
-                triggerAutoUpload()
-                triggerSheetsAutoUpload()
-                triggerFirebaseAutoUpload()
+                if (!_isBootSyncing.value && !isImportingDatabase) {
+                    val rawDbJson = exportDatabaseAsJson()
+                    if (rawDbJson.isNotEmpty()) {
+                        val currentHash = com.example.api.DuniaSyncClient.hashSyncKey(rawDbJson)
+                        if (currentHash != lastLocalDBHashOfViewModel) {
+                            lastLocalDBHashOfViewModel = currentHash
+                            val editTime = System.currentTimeMillis()
+                            localLastUpdated = editTime
+                            saveLocalLastUpdated(editTime)
+                            
+                            triggerAutoUpload()
+                            triggerSheetsAutoUpload()
+                            triggerFirebaseAutoUpload()
+                        }
+                    }
+                }
             }
         }
     }
 
     private fun triggerFirebaseAutoUpload() {
-        if (isFirebaseSyncingNetwork) return
+        if (_isBootSyncing.value || isImportingDatabase || isFirebaseSyncingNetwork) return
         val firebaseUrl = configs.value["FIREBASE_URL"] ?: ""
         val firebaseEnabled = configs.value["FIREBASE_AUTO_ENABLED"] == "true"
         val syncKey = configs.value["SYNC_KEY"] ?: ""
@@ -1086,7 +1248,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
     }
 
     suspend fun localFirebaseAutoUpload() {
-        if (isFirebaseSyncingNetwork) return
+        if (_isBootSyncing.value || isImportingDatabase || isFirebaseSyncingNetwork) return
         val firebaseUrl = configs.value["FIREBASE_URL"] ?: ""
         val syncKey = configs.value["SYNC_KEY"] ?: ""
         val authToken = configs.value["FIREBASE_AUTH_TOKEN"]
@@ -1104,8 +1266,9 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
         _firebaseSyncStatus.value = "Menyinkronkan..."
 
         try {
+            val uploadTimestamp = if (localLastUpdated > 0L) localLastUpdated else System.currentTimeMillis()
             val envelope = org.json.JSONObject().apply {
-                put("last_updated", System.currentTimeMillis())
+                put("last_updated", uploadTimestamp)
                 put("sender_id", clientId)
                 put("db", org.json.JSONObject(rawDbJson))
             }
@@ -1120,7 +1283,10 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
 
             if (success) {
                 lastFirebaseUploadedHash = currentHash
-                localLastUpdated = envelope.getLong("last_updated")
+                savePersistedHash("FIREBASE_HASH", currentHash)
+                lastLocalDBHashOfViewModel = currentHash
+                localLastUpdated = uploadTimestamp
+                saveLocalLastUpdated(uploadTimestamp)
                 _firebaseSyncStatus.value = "Tersinkronisasi ✅"
                 val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
                 _lastFirebaseSyncTime.value = "Hari ini ${sdf.format(Date())}"
@@ -1172,6 +1338,7 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
 
             if (success) {
                 lastSheetsUploadedHash = currentHash
+                savePersistedHash("SHEETS_HASH", currentHash)
                 _sheetsSyncStatus.value = "Tersinkronisasi ✅"
                 val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
                 _lastSheetsSyncTime.value = "Hari ini ${sdf.format(Date())}"
@@ -1234,7 +1401,11 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
 
             if (success) {
                 lastUploadedHash = currentHash
-                localLastUpdated = envelope.getLong("last_updated")
+                savePersistedHash("WEBAPP_HASH", currentHash)
+                lastLocalDBHashOfViewModel = currentHash
+                val upTime = envelope.getLong("last_updated")
+                localLastUpdated = upTime
+                saveLocalLastUpdated(upTime)
                 _syncStatus.value = "Tersinkronisasi"
                 val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
                 _lastSyncTime.value = "Hari ini ${sdf.format(Date())}"
@@ -1277,7 +1448,10 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
                                         isSyncingNetwork = false
                                         if (success) {
                                             localLastUpdated = cloudLastUpdated
+                                            saveLocalLastUpdated(cloudLastUpdated)
                                             lastUploadedHash = com.example.api.DuniaSyncClient.hashSyncKey(dbObj.toString())
+                                            savePersistedHash("WEBAPP_HASH", lastUploadedHash)
+                                            lastLocalDBHashOfViewModel = lastUploadedHash
                                             _syncStatus.value = "Tersinkronisasi"
                                             val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
                                             _lastSyncTime.value = "Update received ${sdf.format(Date())}"
@@ -1332,7 +1506,10 @@ class DuniaViewModel(private val repository: DuniaRepository) : ViewModel() {
                                         isFirebaseSyncingNetwork = false
                                         if (success) {
                                             localLastUpdated = cloudLastUpdated
+                                            saveLocalLastUpdated(cloudLastUpdated)
                                             lastFirebaseUploadedHash = com.example.api.DuniaSyncClient.hashSyncKey(dbObj.toString())
+                                            savePersistedHash("FIREBASE_HASH", lastFirebaseUploadedHash)
+                                            lastLocalDBHashOfViewModel = lastFirebaseUploadedHash
                                             _firebaseSyncStatus.value = "Tersinkronisasi ✅"
                                             val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
                                             _lastFirebaseSyncTime.value = "Terima update ${sdf.format(Date())}"
@@ -1401,11 +1578,14 @@ data class CountdownInfo(
 
 // --- ViewModel Factory ---
 
-class DuniaViewModelFactory(private val repository: DuniaRepository) : ViewModelProvider.Factory {
+class DuniaViewModelFactory(
+    private val repository: DuniaRepository,
+    private val application: android.app.Application
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(DuniaViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return DuniaViewModel(repository) as T
+            return DuniaViewModel(repository, application) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

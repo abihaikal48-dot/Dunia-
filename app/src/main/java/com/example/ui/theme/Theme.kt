@@ -24,13 +24,28 @@ private val LightColorScheme =
     onSurfaceVariant = TextSecondary
   )
 
+private val DarkColorScheme =
+  darkColorScheme(
+    primary = CombinedAccent,
+    secondary = HaikalAccent,
+    tertiary = UmmuAccent,
+    background = BgDeep,
+    surface = BgCard,
+    onBackground = TextPrimary,
+    onSurface = TextPrimary,
+    outline = BorderColor,
+    surfaceVariant = BgDark,
+    onSurfaceVariant = TextSecondary
+  )
+
 @Composable
 fun MyApplicationTheme(
   darkTheme: Boolean = false,
   dynamicColor: Boolean = false,
   content: @Composable () -> Unit,
 ) {
-  val colorScheme = LightColorScheme
+  isDarkModeGlobal = darkTheme
+  val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
