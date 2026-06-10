@@ -18,5 +18,4 @@ local.properties
 debug.keystore
 
 *.apk
-!DUNIA-Mitra-App-Debug.apk
 

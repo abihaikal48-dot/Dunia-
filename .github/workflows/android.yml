@@ -41,10 +41,8 @@ jobs:
         mkdir -p build-artifacts
         if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
           cp app/build/outputs/apk/debug/app-debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
-        elif [ -f DUNIA-Mitra-App-Debug.apk ]; then
-          cp DUNIA-Mitra-App-Debug.apk build-artifacts/DUNIA-Mitra-App-Debug.apk
         else
-          echo "ERROR: APK file not found!"
+          echo "ERROR: APK file was not built by Gradle!"
           exit 1
         fi
         echo "APK file successfully prepared in build-artifacts/"
@@ -59,24 +57,29 @@ jobs:
 
     - name: Create Git Release & Upload APK (On Version Tag Push)
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
+      uses: ncipollo/release-action@v1
       with:
-        files: build-artifacts/DUNIA-Mitra-App-Debug.apk
-        name: Release ${{ github.ref_name }}
-        tag_name: ${{ github.ref_name }}
+        artifacts: "build-artifacts/DUNIA-Mitra-App-Debug.apk"
+        allowUpdates: true
+        replacesArtifacts: true
+        name: "Release ${{ github.ref_name }}"
+        tag: "${{ github.ref_name }}"
         draft: false
         prerelease: false
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        generateReleaseNotes: true
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Update Latest Release (On Every Push to Any Branch)
       if: "!startsWith(github.ref, 'refs/tags/v')"
-      uses: softprops/action-gh-release@v2
+      uses: ncipollo/release-action@v1
       with:
-        files: build-artifacts/DUNIA-Mitra-App-Debug.apk
+        artifacts: "build-artifacts/DUNIA-Mitra-App-Debug.apk"
+        allowUpdates: true
+        replacesArtifacts: true
         name: "DUNIA Mitra App Latest Build"
-        tag_name: "latest"
+        tag: "latest"
+        draft: false
+        prerelease: true
         body: |
           ### File APK Terbaru Berhasil Di-build! 🎉
           
@@ -88,7 +91,4 @@ jobs:
           - **Commit link**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
           
           *Catatan: Pastikan kamu mengizinkan instalasi dari sumber tidak dikenal (Unknown Sources) di pengaturan keamanan HP kamu.*
-        draft: false
-        prerelease: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}

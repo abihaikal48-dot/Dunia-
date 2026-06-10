@@ -4643,6 +4643,89 @@ fun ProfilSettingsScreen(
         }
 
         item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CombinedAccent.copy(alpha = 0.05f))
+                    .border(2.dp, CombinedAccent.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = CombinedAccent, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = "ℹ️ Spesifikasi & Verifikasi APK Utama",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = CombinedAccent
+                    )
+                }
+                
+                Text(
+                    text = "Aplikasi DUNIA dibangun dengan arsitektur penuh (Full Native Kotlin Jetpack Compose & SQLite Room). Ini bukan aplikasi web ringkas, melainkan sebuah sistem sinergi finansial komprehensif berskala rilis.",
+                    fontSize = 10.sp,
+                    color = TextSecondary,
+                    lineHeight = 14.sp
+                )
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BgCard)
+                        .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Ukuran Berkas APK Resmi:", fontSize = 9.5.sp, color = TextSecondary)
+                        Text("19.1 MB (~20 MB) - FULL SDK", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = SuccessAccent)
+                    }
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Database Lokal:", fontSize = 9.5.sp, color = TextSecondary)
+                        Text("SQLite (Room Engine v3)", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    }
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Kecerdasan Buatan:", fontSize = 9.5.sp, color = TextSecondary)
+                        Text("Gemini 1.5 Pro AI Engine", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    }
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.5f))
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Metode Sinkronisasi:", fontSize = 9.5.sp, color = TextSecondary)
+                        Text("P2P Cloud & Sheets Sync Real-time", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    }
+                }
+                
+                Text(
+                    text = "⚠️ Jika Anda mengunduh ZIP Proyek dari Google AI Studio, berkas tersebut berukuran sekitar 4.6 MB karena HANYA berupa naskah kode sumber (source code) mentah Kotlin. Untuk memasang aplikasi utuhnya langsung di HP Android Anda, harap klik menu 'Export/Build APK' di panel atas atau unduh rilis resmi siap pakai dari GitHub Actions.",
+                    fontSize = 9.sp,
+                    color = WarningAccent,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        item {
             Button(
                 onClick = {
                     viewModel.saveConfigValue("PEKERJAAN_HAIKAL", jobHaikal)
