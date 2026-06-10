@@ -24,18 +24,20 @@ android {
 
   signingConfigs {
     // Decode debug.keystore from base64 if not present
-    val debugKeystoreFile = file("${rootDir}/debug.keystore")
+    val debugKeystoreFile = File(rootDir, "debug.keystore")
     if (!debugKeystoreFile.exists()) {
-      val base64File = file("${rootDir}/debug.keystore.base64")
+      val base64File = File(rootDir, "debug.keystore.base64")
       if (base64File.exists()) {
         try {
           val cleanBase64 = base64File.readText().replace("\\s".toRegex(), "")
           val bytes = Base64.getDecoder().decode(cleanBase64)
           debugKeystoreFile.writeBytes(bytes)
-          println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY =====")
+          println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY TO ${debugKeystoreFile.absolutePath} =====")
         } catch (e: Exception) {
           println("ERROR: Failed to decode debug.keystore: ${e.message}")
         }
+      } else {
+        println("ERROR: debug.keystore.base64 does not exist at ${base64File.absolutePath}")
       }
     }
 
@@ -47,7 +49,7 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      storeFile = File(rootDir, "debug.keystore")
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
@@ -158,8 +160,33 @@ tasks.register("copyDebugApk") {
     println("==============================")
   }
 }
+
+tasks.register("decodeDebugKeystore") {
+  val base64File = File(rootDir, "debug.keystore.base64")
+  val debugKeystoreFile = File(rootDir, "debug.keystore")
+  inputs.file(base64File)
+  outputs.file(debugKeystoreFile)
+  doLast {
+    if (base64File.exists()) {
+      try {
+        val cleanBase64 = base64File.readText().replace("\\s".toRegex(), "")
+        val bytes = Base64.getDecoder().decode(cleanBase64)
+        debugKeystoreFile.writeBytes(bytes)
+        println("===== DECODED DEBUG KEYSTORE SUCCESSFULLY TO ${debugKeystoreFile.absolutePath} ==================")
+      } catch (e: Exception) {
+        println("ERROR: Failed to decode debug.keystore: ${e.message}")
+        }
+    } else {
+      println("ERROR: debug.keystore.base64 does not exist at ${base64File.absolutePath}")
+    }
+  }
+}
+
 tasks.configureEach {
   if (name == "assembleDebug") {
     finalizedBy("copyDebugApk")
+  }
+  if (name == "assembleDebug" || name.startsWith("compileDebug") || name.startsWith("preDebugBuild") || name == "preBuild" || name.startsWith("ksp")) {
+    dependsOn("decodeDebugKeystore")
   }
 }
