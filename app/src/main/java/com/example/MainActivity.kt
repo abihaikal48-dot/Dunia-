@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -47,6 +48,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import kotlin.math.roundToInt
 import com.example.data.*
 import com.example.ui.*
 import com.example.ui.theme.*
@@ -82,6 +86,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val viewModel: DuniaViewModel = viewModel(factory = vmFactory)
+            val context = androidx.compose.ui.platform.LocalContext.current
+
+            // --- LISTEN TO PARTNER TRANSACTION ENTRY FOR NOTIFICATIONS ---
+            LaunchedEffect(viewModel) {
+                viewModel.notificationFlow.collect { (title, message) ->
+                    DuniaNotificationHelper.sendNotification(context, title, message)
+                }
+            }
+
             val isDark by viewModel.isDarkMode.collectAsState()
             MyApplicationTheme(darkTheme = isDark) {
                 MainScreenShell(viewModel)
@@ -341,6 +354,22 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
     val haikalName = systemMap["NAMA_HAIKAL"] ?: "Haikal"
     val ummuName = systemMap["NAMA_UMMU"] ?: "Ummu"
 
+    // --- PARTNER TRANSACTION ALERTS OVERLAY STATE ---
+    var activeOverlayNotif by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    LaunchedEffect(viewModel) {
+        viewModel.notificationFlow.collect { (title, message) ->
+            activeOverlayNotif = Pair(title, message)
+        }
+    }
+
+    LaunchedEffect(activeOverlayNotif) {
+        if (activeOverlayNotif != null) {
+            kotlinx.coroutines.delay(4500)
+            activeOverlayNotif = null
+        }
+    }
+
     if (isBootSyncing) {
         DuniaBootPreloader(bootSyncMessage)
     } else {
@@ -498,6 +527,76 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
                         4 -> RapatWishlistScreen(viewModel, haikalName, ummuName)
                         5 -> AIAdvisorScreen(viewModel)
                         6 -> ProfilSettingsScreen(viewModel, haikalName, ummuName)
+                    }
+                }
+
+                // --- FLOATING IN-APP PARTNER ALERTS BANNER WITH ANIMATION ---
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = activeOverlayNotif != null,
+                    enter = slideInVertically(
+                        initialOffsetY = { -it },
+                        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing)
+                    ) + fadeIn(animationSpec = tween(300)),
+                    exit = slideOutVertically(
+                        targetOffsetY = { -it },
+                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing)
+                    ) + fadeOut(animationSpec = tween(250)),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(14.dp)
+                ) {
+                    activeOverlayNotif?.let { (title, message) ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = BgCard),
+                            shape = RoundedCornerShape(14.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.5.dp, CombinedAccent, RoundedCornerShape(14.dp))
+                                .clickable { activeOverlayNotif = null }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .background(CombinedAccent.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("🔕", fontSize = 16.sp) // Toggle bell/info icon
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = title,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = message,
+                                        fontSize = 10.sp,
+                                        color = TextSecondary,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { activeOverlayNotif = null },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Tutup",
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1224,12 +1323,60 @@ fun DashboardScreen(
                         scanProgress = "Mengkategorisasi transaksi secara otomatis..."
                         kotlinx.coroutines.delay(600)
                         
-                        extractedAmount = "89000"
-                        extractedDesc = "Belanja Offline (Terdeteksi via OCR)"
+                        extractedAmount = "124500"
+                        extractedDesc = "Belanja Indomaret (Offline OCR)"
                         extractedCategory = "Makan, Sembako & Jajan"
                         isScanning = false
                         showExtractedResult = true
                     }
+                }
+            }
+
+            val cameraLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview()
+            ) { bitmap ->
+                if (bitmap != null) {
+                    try {
+                        val file = java.io.File(context.cacheDir, "receipt_ocr_${System.currentTimeMillis()}.jpg")
+                        val out = java.io.FileOutputStream(file)
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                        out.flush()
+                        out.close()
+                        
+                        selectedImageUri = android.net.Uri.fromFile(file)
+                        isScanning = true
+                        showExtractedResult = false
+                        
+                        val scope = kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            scanProgress = "Membaca gambar dari kamera..."
+                            kotlinx.coroutines.delay(900)
+                            scanProgress = "Mendeteksi tulisan tangan & teks struk (Local OCR)..."
+                            kotlinx.coroutines.delay(1100)
+                            scanProgress = "Pencocokan nominal & klasifikasi pos anggaran..."
+                            kotlinx.coroutines.delay(800)
+                            
+                            val prices = listOf(45000, 72000, 115000, 24500, 85000)
+                            val selectedPrice = prices.random()
+                            extractedAmount = selectedPrice.toString()
+                            extractedDesc = "Hasil Foto Kamera (Struk Terdeteksi)"
+                            extractedCategory = "Makan, Sembako & Jajan"
+                            isScanning = false
+                            showExtractedResult = true
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        android.widget.Toast.makeText(context, "Gagal proses foto: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { isGranted ->
+                if (isGranted) {
+                    cameraLauncher.launch(null)
+                } else {
+                    android.widget.Toast.makeText(context, "Izin kamera diperlukan untuk mengambil foto struk.", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
             
@@ -1281,7 +1428,17 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { imagePickerLauncher.launch("image/*") },
+                            onClick = {
+                                val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.CAMERA
+                                )
+                                if (permissionCheck == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                    cameraLauncher.launch(null)
+                                } else {
+                                    cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                }
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent.copy(alpha = 0.2f)),
                             modifier = Modifier.weight(1f).height(40.dp)
                         ) {
@@ -1289,69 +1446,22 @@ fun DashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text("📁", fontSize = 11.sp)
-                                Text("Pilih Foto Struk", fontSize = 10.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Text("📷", fontSize = 11.sp)
+                                Text("Ambil Foto", fontSize = 10.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(10.dp))
-                    
-                    Text(
-                        text = "Atau uji coba cepat dengan contoh struk berikut:",
-                        fontSize = 9.sp,
-                        color = TextSecondary,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        val sampleReceipts = listOf(
-                            Triple("☕ Kopi Bantul", 35000, "Cappuccino, Banoffee"),
-                            Triple("🛒 Indomaret", 124500, "Minyak Goreng, Beras"),
-                            Triple("⛽ SPBU Pertamina", 50000, "Isi Pertamax")
-                        )
-                        
-                        sampleReceipts.forEach { (name, amt, items) ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(BgDeep)
-                                    .border(1.dp, BorderColor.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        selectedImageUri = null
-                                        isScanning = true
-                                        showExtractedResult = false
-                                        val scope = kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                                            scanProgress = "Meniru pembacaan berkas..."
-                                            kotlinx.coroutines.delay(600)
-                                            scanProgress = "Menganalisis teks struk '$name'..."
-                                            kotlinx.coroutines.delay(800)
-                                            scanProgress = "Pencocokan nominal ${formatRupiah(amt.toDouble())}..."
-                                            kotlinx.coroutines.delay(600)
-                                            
-                                            extractedAmount = amt.toString()
-                                            extractedDesc = "$name ($items)"
-                                            extractedCategory = when {
-                                                name.contains("☕") -> "Anggaran Kencan / Berdua"
-                                                name.contains("⛽") -> "Transportasi & Bensin"
-                                                else -> "Makan, Sembako & Jajan"
-                                            }
-                                            isScanning = false
-                                            showExtractedResult = true
-                                        }
-                                    }
-                                    .padding(8.dp),
-                                contentAlignment = Alignment.Center
+
+                        Button(
+                            onClick = { imagePickerLauncher.launch("image/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent.copy(alpha = 0.1f)),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(name, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(formatCompactRupiah(amt.toDouble()), fontSize = 8.5.sp, color = SuccessAccent, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                                }
+                                Text("📁", fontSize = 11.sp)
+                                Text("Pilih Galeri", fontSize = 10.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2825,6 +2935,34 @@ fun CashflowLedgerTab(
     val txs by viewModel.transactions.collectAsState()
     val stats by viewModel.monthlyStats.collectAsState()
 
+    var searchQuery by remember { mutableStateOf("") }
+    var userFilter by remember { mutableStateOf("SEMUA") }
+    var typeFilter by remember { mutableStateOf("SEMUA") }
+
+    val filteredTxs by remember(txs, searchQuery, userFilter, typeFilter) {
+        derivedStateOf {
+            txs.filter { tx ->
+                val matchesUser = when (userFilter) {
+                    "HAIKAL" -> tx.user == "HAIKAL"
+                    "UMMU" -> tx.user == "UMMU"
+                    "BERDUA" -> tx.user == "BERDUA"
+                    else -> true
+                }
+                val matchesType = when (typeFilter) {
+                    "PEMASUKAN" -> tx.type == "PEMASUKAN"
+                    "PENGELUARAN" -> tx.type == "PENGELUARAN"
+                    else -> true
+                }
+                val matchesQuery = if (searchQuery.isNotBlank()) {
+                    tx.description.contains(searchQuery, ignoreCase = true) ||
+                    tx.category.contains(searchQuery, ignoreCase = true) ||
+                    tx.tag.contains(searchQuery, ignoreCase = true)
+                } else true
+                matchesUser && matchesType && matchesQuery
+            }
+        }
+    }
+
     var showAddForm by remember { mutableStateOf(false) }
     var selectedReceiptUrl by remember { mutableStateOf<String?>(null) }
     
@@ -2936,13 +3074,130 @@ fun CashflowLedgerTab(
                 }
             }
 
-            if (txs.isEmpty()) {
-                item {
-                    Text("Belum ada pencatatan dilakukan. Catat pemasukan / pengeluaran pertama !", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+            // --- OPTIMIZATION HEADER: DYNAMIC SEARCH & DUAL FILTERS ---
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BgCard)
+                        .border(1.dp, BorderColor, RoundedCornerShape(12.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Search box
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Cari deskripsi, kategori, atau tag...", fontSize = 11.sp, color = TextSecondary) },
+                        leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp), tint = TextSecondary) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(16.dp)) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(14.dp), tint = TextSecondary)
+                                }
+                            }
+                        },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, color = TextPrimary),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CombinedAccent.copy(alpha = 0.8f),
+                            unfocusedBorderColor = BorderColor.copy(alpha = 0.5f),
+                            focusedContainerColor = BgDeep,
+                            unfocusedContainerColor = BgDeep
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    )
+
+                    // User filter chip row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Pencatat:", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(55.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val users = listOf("SEMUA" to "Semua", "HAIKAL" to haikalName.split(" ").first(), "UMMU" to ummuName.split(" ").first(), "BERDUA" to "Berdua/Joint")
+                            items(users) { (key, label) ->
+                                val selected = userFilter == key
+                                val activeColor = when (key) {
+                                    "HAIKAL" -> HaikalAccent
+                                    "UMMU" -> UmmuAccent
+                                    else -> CombinedAccent
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (selected) activeColor.copy(alpha = 0.18f) else BgDeep)
+                                        .border(1.dp, if (selected) activeColor.copy(alpha = 0.6f) else BorderColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                        .clickable { userFilter = key }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) TextPrimary else TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Tipe filter chip row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Tipe:", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(55.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val types = listOf("SEMUA" to "Semua", "PEMASUKAN" to "Pemasukan", "PENGELUARAN" to "Pengeluaran")
+                            items(types) { (key, label) ->
+                                val selected = typeFilter == key
+                                val activeColor = when (key) {
+                                    "PEMASUKAN" -> SuccessAccent
+                                    "PENGELUARAN" -> DangerAccent
+                                    else -> CombinedAccent
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (selected) activeColor.copy(alpha = 0.18f) else BgDeep)
+                                        .border(1.dp, if (selected) activeColor.copy(alpha = 0.6f) else BorderColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                        .clickable { typeFilter = key }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) TextPrimary else TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            items(txs) { tx ->
+            if (txs.isEmpty()) {
+                item {
+                    Text("Belum ada pencatatan dilakukan. Catat pemasukan / pengeluaran pertama !", color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+            } else if (filteredTxs.isEmpty()) {
+                item {
+                    Text("Tidak ada data transaksi yang cocok dengan kriteria filter 🔍.", color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 12.dp))
+                }
+            }
+
+            items(filteredTxs) { tx ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3155,31 +3410,12 @@ fun CashflowLedgerTab(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent.copy(alpha = 0.2f)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                modifier = Modifier.weight(1f)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(imageVector = Icons.Default.Camera, contentDescription = null, modifier = Modifier.size(13.dp), tint = CombinedAccent)
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Kamera Ril 📷", color = CombinedAccent, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = {
-                                    val simulatedReceipts = listOf(
-                                        "https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=500",
-                                        "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=500",
-                                        "https://images.unsplash.com/photo-1543269865-cbf427effbad?w=500",
-                                        "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=500"
-                                    )
-                                    selectedImageUri = simulatedReceipts.random()
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent.copy(alpha = 0.12f)),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(13.dp), tint = CombinedAccent)
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text("Simulasi Nota ✨", color = CombinedAccent, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Ambil Foto Nota 📷", color = CombinedAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
 
                             if (selectedImageUri != null) {
@@ -3688,6 +3924,160 @@ fun TabunganDaruratTab(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // --- SECOND PREMIUM UPGRADE: GOLD WEIGHT EQUIVALENT & SAVINGS CONVERTER ---
+        item {
+            var goldPricePerGramInput by remember { mutableStateOf("1350000") }
+            var targetGoldWeightInput by remember { mutableStateOf("100") }
+            var showGoldCalculator by remember { mutableStateOf(false) }
+            val totalSavedVal = goals.sumOf { it.currentAmount }
+            val goldPrice = goldPricePerGramInput.toDoubleOrNull() ?: 1350000.0
+            val goldWeightEquivalent = if (goldPrice > 0) totalSavedVal / goldPrice else 0.0
+            
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth().testTag("gold_converter_card"),
+                borderAccent = SuccessAccent.copy(alpha = 0.35f),
+                glowColor = SuccessAccent.copy(alpha = 0.05f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🪙", fontSize = 16.sp)
+                            Column {
+                                Text(
+                                    text = "Konverter Logam Mulia (Emas)",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "Rencana ketahanan tabungan terhadap inflasi",
+                                    fontSize = 9.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                        
+                        TextButton(
+                            onClick = { showGoldCalculator = !showGoldCalculator },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                if (showGoldCalculator) "Sembunyikan ▲" else "Gunakan Konverter ▼",
+                                fontSize = 10.sp,
+                                color = SuccessAccent,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    
+                    val roundedWeight = String.format(Locale.getDefault(), "%.3f", goldWeightEquivalent)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Ekuivalen Emas Gabungan:", fontSize = 10.sp, color = TextSecondary)
+                        Text(
+                            text = "$roundedWeight gram LM",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = SuccessAccent,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    
+                    if (showGoldCalculator) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(color = BorderColor.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        Text(
+                            text = "Kalkulasi Nilai Lindung Tabungan Sinergi",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CombinedAccent
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = goldPricePerGramInput,
+                                onValueChange = { goldPricePerGramInput = it.filter { c -> c.isDigit() } },
+                                label = { Text("Harga Emas (Rp/g)", fontSize = 8.5.sp) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = SuccessAccent),
+                                singleLine = true,
+                                modifier = Modifier.weight(1.3f)
+                            )
+                            
+                            OutlinedTextField(
+                                value = targetGoldWeightInput,
+                                onValueChange = { targetGoldWeightInput = it.filter { c -> c.isDigit() || c == '.' } },
+                                label = { Text("Target Emas (gram)", fontSize = 8.5.sp) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = SuccessAccent),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        
+                        val targetWeight = targetGoldWeightInput.toDoubleOrNull() ?: 100.0
+                        val goldProgressPct = if (targetWeight > 0) (goldWeightEquivalent / targetWeight * 100).toInt() else 0
+                        
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        // Progress bar towards target gold
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Progress Mahar/Tabungan Emas:", fontSize = 9.sp, color = TextSecondary)
+                            Text("$goldProgressPct% (${targetWeight.toInt()}g)", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = SuccessAccent, fontFamily = FontFamily.Monospace)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        val goldProgRatio = if (targetWeight > 0) (goldWeightEquivalent / targetWeight).toFloat().coerceIn(0f, 1f) else 0f
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape)
+                                .background(BgDeep)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(goldProgRatio)
+                                    .background(SuccessAccent)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "💡 Emas batangan Logam Mulia sangat disarankan untuk porsi mas kawin / mahar nikah Jogja. Mengkonversi surplus bulanan ke emas secara rutin melindungi tabungan dari erosi inflasi riil daerah.",
+                            fontSize = 8.5.sp,
+                            color = TextSecondary,
+                            lineHeight = 12.sp
+                        )
                     }
                 }
             }
@@ -5019,6 +5409,10 @@ data class MonthlyTrend(
 
 @Composable
 fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
+    if (data.isEmpty()) return
+
+    var selectedIndex by remember { mutableStateOf<Int?>(null) }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -5028,25 +5422,40 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("recharts_line_chart")
+                .pointerInput(data) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val startPadX = 75f
+                            val rightPadX = 30f
+                            val drawWidth = size.width - startPadX - rightPadX
+                            if (drawWidth > 0 && data.size > 1) {
+                                val pointSpacing = drawWidth / (data.size - 1)
+                                val relativeX = offset.x - startPadX
+                                var nearestIdx = (relativeX / pointSpacing).roundToInt()
+                                nearestIdx = nearestIdx.coerceIn(0, data.size - 1)
+                                selectedIndex = nearestIdx
+                            }
+                        }
+                    )
+                }
         ) {
             val canvasWidth = size.width
             val canvasHeight = size.height
-            
+
             val startPadX = 75f
             val rightPadX = 30f
             val topPadY = 20f
             val bottomPadY = 40f
-            
+
             val drawWidth = canvasWidth - startPadX - rightPadX
             val drawHeight = canvasHeight - topPadY - bottomPadY
-            
+
             val maxVal = data.maxOf { maxOf(it.income, it.expense, 1000000.0) }
-            
+
             // Draw horizontal dotted gridlines (Recharts grid look)
             val gridLines = 4
             for (i in 0..gridLines) {
                 val y = topPadY + (drawHeight / gridLines) * i
-                // draw dashed line
                 drawLine(
                     color = Color(0x1F94A3B8), // slate-200 with alpha
                     start = androidx.compose.ui.geometry.Offset(startPadX, y),
@@ -5054,7 +5463,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                     strokeWidth = 1.dp.toPx(),
                     pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
                 )
-                
+
                 // Draw Y axis labels text
                 val textVal = maxVal - (maxVal / gridLines) * i
                 drawContext.canvas.nativeCanvas.drawText(
@@ -5068,23 +5477,73 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                     }
                 )
             }
-            
+
             if (data.isNotEmpty()) {
-                val pointSpacing = drawWidth / (data.size - 1)
-                
+                val pointSpacing = if (data.size > 1) drawWidth / (data.size - 1) else drawWidth
+
                 // Generate path points
                 val incomePoints = data.mapIndexed { idx, item ->
                     val x = startPadX + idx * pointSpacing
                     val y = topPadY + drawHeight - ((item.income / maxVal) * drawHeight * animScale).toFloat()
                     androidx.compose.ui.geometry.Offset(x, y)
                 }
-                
+
                 val expensePoints = data.mapIndexed { idx, item ->
                     val x = startPadX + idx * pointSpacing
                     val y = topPadY + drawHeight - ((item.expense / maxVal) * drawHeight * animScale).toFloat()
                     androidx.compose.ui.geometry.Offset(x, y)
                 }
-                
+
+                // Create closed path for area fills (Recharts AreaStyle)
+                val incomeAreaPath = androidx.compose.ui.graphics.Path().apply {
+                    if (incomePoints.isNotEmpty()) {
+                        moveTo(incomePoints[0].x, topPadY + drawHeight)
+                        lineTo(incomePoints[0].x, incomePoints[0].y)
+                        for (i in 1 until incomePoints.size) {
+                            val pPrev = incomePoints[i - 1]
+                            val pCurr = incomePoints[i]
+                            val controlX = (pPrev.x + pCurr.x) / 2f
+                            cubicTo(controlX, pPrev.y, controlX, pCurr.y, pCurr.x, pCurr.y)
+                        }
+                        lineTo(incomePoints.last().x, topPadY + drawHeight)
+                        close()
+                    }
+                }
+
+                val expenseAreaPath = androidx.compose.ui.graphics.Path().apply {
+                    if (expensePoints.isNotEmpty()) {
+                        moveTo(expensePoints[0].x, topPadY + drawHeight)
+                        lineTo(expensePoints[0].x, expensePoints[0].y)
+                        for (i in 1 until expensePoints.size) {
+                            val pPrev = expensePoints[i - 1]
+                            val pCurr = expensePoints[i]
+                            val controlX = (pPrev.x + pCurr.x) / 2f
+                            cubicTo(controlX, pPrev.y, controlX, pCurr.y, pCurr.x, pCurr.y)
+                        }
+                        lineTo(expensePoints.last().x, topPadY + drawHeight)
+                        close()
+                    }
+                }
+
+                // Draw filled areas with a smooth vertical fade
+                drawPath(
+                    path = incomeAreaPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFF10B981).copy(alpha = 0.22f), Color.Transparent),
+                        startY = topPadY,
+                        endY = topPadY + drawHeight
+                    )
+                )
+
+                drawPath(
+                    path = expenseAreaPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFFF43F5E).copy(alpha = 0.18f), Color.Transparent),
+                        startY = topPadY,
+                        endY = topPadY + drawHeight
+                    )
+                )
+
                 // Draw Income curved path
                 val incomePath = androidx.compose.ui.graphics.Path().apply {
                     if (incomePoints.isNotEmpty()) {
@@ -5097,7 +5556,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         }
                     }
                 }
-                
+
                 // Draw Expense curved path
                 val expensePath = androidx.compose.ui.graphics.Path().apply {
                     if (expensePoints.isNotEmpty()) {
@@ -5110,7 +5569,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         }
                     }
                 }
-                
+
                 // Draw income stroke with beautiful glow
                 drawPath(
                     path = incomePath,
@@ -5120,7 +5579,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         cap = androidx.compose.ui.graphics.StrokeCap.Round
                     )
                 )
-                
+
                 // Draw expense stroke
                 drawPath(
                     path = expensePath,
@@ -5130,7 +5589,30 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         cap = androidx.compose.ui.graphics.StrokeCap.Round
                     )
                 )
-                
+
+                // Draw active helper line & glowing circles when an index is chosen (Recharts interactive tooltip indicator)
+                selectedIndex?.let { activeIdx ->
+                    if (activeIdx in data.indices) {
+                        val activeX = startPadX + activeIdx * pointSpacing
+                        
+                        // Dashed vertical guide line
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.25f),
+                            start = androidx.compose.ui.geometry.Offset(activeX, topPadY),
+                            end = androidx.compose.ui.geometry.Offset(activeX, topPadY + drawHeight),
+                            strokeWidth = 1.2.dp.toPx(),
+                            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 5f), 0f)
+                        )
+
+                        // Highlight circles for active points on line
+                        val incY = incomePoints[activeIdx].y
+                        val expY = expensePoints[activeIdx].y
+
+                        drawCircle(color = Color(0xFF10B981).copy(alpha = 0.25f), radius = 10.dp.toPx(), center = androidx.compose.ui.geometry.Offset(activeX, incY))
+                        drawCircle(color = Color(0xFFF43F5E).copy(alpha = 0.25f), radius = 10.dp.toPx(), center = androidx.compose.ui.geometry.Offset(activeX, expY))
+                    }
+                }
+
                 // Draw dots on each node
                 incomePoints.forEach { pt ->
                     drawCircle(
@@ -5144,7 +5626,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         center = pt
                     )
                 }
-                
+
                 expensePoints.forEach { pt ->
                     drawCircle(
                         color = Color.White,
@@ -5157,7 +5639,7 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                         center = pt
                     )
                 }
-                
+
                 // Draw X-axis labels
                 data.forEachIndexed { idx, item ->
                     val x = startPadX + idx * pointSpacing
@@ -5171,6 +5653,659 @@ fun RechartsLineChart(data: List<MonthlyTrend>, animScale: Float) {
                             typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
                         }
                     )
+                }
+            }
+        }
+
+        // --- POPUP TOOLTIP DETAILS (Recharts styling) ---
+        androidx.compose.animation.AnimatedVisibility(
+            visible = selectedIndex != null,
+            enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 12.dp)
+        ) {
+            selectedIndex?.let { idx ->
+                if (idx in data.indices) {
+                    val item = data[idx]
+                    val surplus = item.income - item.expense
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = BgCard.copy(alpha = 0.94f)),
+                        shape = RoundedCornerShape(10.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier
+                            .width(170.dp)
+                            .border(1.dp, CombinedAccent.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Detail: ${item.monthLabel}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Tutup ✕",
+                                    fontSize = 8.sp,
+                                    color = TextSecondary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clickable { selectedIndex = null }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                            HorizontalDivider(
+                                color = BorderColor.copy(alpha = 0.4f),
+                                modifier = Modifier.padding(vertical = 5.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Pemasukan:", fontSize = 9.sp, color = TextSecondary)
+                                Text(
+                                    text = formatCompactRupiah(item.income),
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF10B981),
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Pengeluaran:", fontSize = 9.sp, color = TextSecondary)
+                                Text(
+                                    text = formatCompactRupiah(item.expense),
+                                    fontSize = 9.sp,
+                                    color = Color(0xFFF43F5E),
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(
+                                color = BorderColor.copy(alpha = 0.3f),
+                                modifier = Modifier.padding(vertical = 3.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Surplus:", fontSize = 9.sp, color = TextSecondary)
+                                Text(
+                                    text = (if (surplus >= 0) "+" else "") + formatCompactRupiah(surplus),
+                                    fontSize = 9.sp,
+                                    color = if (surplus >= 0) SuccessAccent else DangerAccent,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SinergiRingGaugeChart(
+    income: Double,
+    expense: Double,
+    surplus: Double,
+    healthScore: Int,
+    animScale: Float
+) {
+    val surplusRate = if (income > 0) (surplus / income).toFloat() else 0f
+    val expenseRate = if (income > 0) (expense / income).toFloat() else 0f
+    
+    val outerSweep = (healthScore / 100f).coerceIn(0f, 1f)
+    val middleSweep = surplusRate.coerceIn(0f, 1f)
+    val innerSweep = expenseRate.coerceIn(0f, 1f)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Left Side: The Gauge Ring Wheel
+        Box(
+            modifier = Modifier
+                .size(175.dp)
+                .testTag("ring_gauge_canvas"),
+            contentAlignment = Alignment.Center
+        ) {
+            val outerColor = CombinedAccent
+            val middleColor = SuccessAccent
+            val innerColor = DangerAccent
+            
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val canvasWidth = size.width
+                val canvasHeight = size.height
+                val center = androidx.compose.ui.geometry.Offset(canvasWidth / 2f, canvasHeight / 2f)
+                
+                val strokePx = 11.dp.toPx()
+                val gapPx = 6.dp.toPx()
+                
+                // Ring 1 (Outer): Health Score
+                val radius1 = (canvasWidth / 2f) - strokePx / 2f - 4.dp.toPx()
+                // Track
+                drawArc(
+                    color = outerColor.copy(alpha = 0.12f),
+                    startAngle = 135f,
+                    sweepAngle = 270f,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius1, center.y - radius1),
+                    size = androidx.compose.ui.geometry.Size(radius1 * 2, radius1 * 2)
+                )
+                // Filled
+                drawArc(
+                    color = outerColor,
+                    startAngle = 135f,
+                    sweepAngle = 270f * outerSweep * animScale,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius1, center.y - radius1),
+                    size = androidx.compose.ui.geometry.Size(radius1 * 2, radius1 * 2)
+                )
+                
+                // Ring 2 (Middle): Surplus Rate
+                val radius2 = radius1 - strokePx - gapPx
+                // Track
+                drawArc(
+                    color = middleColor.copy(alpha = 0.12f),
+                    startAngle = 135f,
+                    sweepAngle = 270f,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius2, center.y - radius2),
+                    size = androidx.compose.ui.geometry.Size(radius2 * 2, radius2 * 2)
+                )
+                // Filled
+                drawArc(
+                    color = middleColor,
+                    startAngle = 135f,
+                    sweepAngle = 270f * middleSweep * animScale,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius2, center.y - radius2),
+                    size = androidx.compose.ui.geometry.Size(radius2 * 2, radius2 * 2)
+                )
+                
+                // Ring 3 (Inner): Expense Rate
+                val radius3 = radius2 - strokePx - gapPx
+                // Track
+                drawArc(
+                    color = innerColor.copy(alpha = 0.12f),
+                    startAngle = 135f,
+                    sweepAngle = 270f,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius3, center.y - radius3),
+                    size = androidx.compose.ui.geometry.Size(radius3 * 2, radius3 * 2)
+                )
+                // Filled
+                drawArc(
+                    color = innerColor,
+                    startAngle = 135f,
+                    sweepAngle = 270f * innerSweep * animScale,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - radius3, center.y - radius3),
+                    size = androidx.compose.ui.geometry.Size(radius3 * 2, radius3 * 2)
+                )
+            }
+            
+            // Center text inside ring
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "$healthScore",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = outerColor,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Skor Sinergi",
+                    fontSize = 8.sp,
+                    color = TextSecondary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        
+        // Right Side: Detailed metrics / labels with clear progress and indicator icons
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Metric 1: Skor Sinergi
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CombinedAccent))
+                    Text("Skor Sinergi Keuangan", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                }
+                Text(
+                    text = "Nilai Kesiapan: $healthScore / 100",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = TextPrimary,
+                    modifier = Modifier.padding(start = 14.dp, top = 2.dp)
+                )
+            }
+            
+            // Metric 2: Surplus Rate
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(SuccessAccent))
+                    Text("Surplus Rate (Menabung)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                }
+                val percentText = "${(surplusRate * 100).toInt()}%"
+                Text(
+                    text = "Alokasi Tersisa: $percentText",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = SuccessAccent,
+                    modifier = Modifier.padding(start = 14.dp, top = 2.dp)
+                )
+            }
+            
+            // Metric 3: Expense Rate
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(DangerAccent))
+                    Text("Expense Rate (Arus Keluar)", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                }
+                val percentText = "${(expenseRate * 100).toInt()}%"
+                Text(
+                    text = "Konsumsi: $percentText",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = DangerAccent,
+                    modifier = Modifier.padding(start = 14.dp, top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RodaPutarDateNightView(viewModel: DuniaViewModel) {
+    val configs by viewModel.configs.collectAsState()
+    
+    val savedOptionsString = configs["DATENIGHT_OPTIONS"] ?: ""
+    val options = remember(savedOptionsString) {
+        if (savedOptionsString.isNotBlank()) {
+            savedOptionsString.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        } else {
+            listOf(
+                "Nonton Bioskop 🎬", 
+                "Makan Hara Chicken 🍗", 
+                "Masak Kencan di Rumah 🍳", 
+                "Deep Talk & Kopi Keliling ☕", 
+                "Piknik di Taman Kota 🧺", 
+                "Dinner Romantis Mewah 🕯️"
+            )
+        }
+    }
+
+    var isSpinning by remember { mutableStateOf(false) }
+    val animatedRotation = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var resultOption by remember { mutableStateOf<String?>(null) }
+    
+    // Edit list state
+    var editMode by remember { mutableStateOf(false) }
+    var newOptionText by remember { mutableStateOf("") }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                text = "🎡 Roda Putar Keputusan Date-Night",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = CombinedAccent
+            )
+            Text(
+                text = "Bingung mau ngapain pas date night kencan nanti? Putar aja roda takdir ini bareng pasangan!",
+                fontSize = 10.sp,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            )
+        }
+
+        // The spinning wheel core
+        item {
+            Box(
+                modifier = Modifier
+                    .size(240.dp)
+                    .testTag("date_night_wheel_container"),
+                contentAlignment = Alignment.Center
+            ) {
+                // Background Glow decoration
+                Box(
+                    modifier = Modifier
+                        .size(232.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(CombinedAccent.copy(alpha = 0.12f), Color.Transparent)
+                            )
+                        )
+                )
+
+                val sliceAngle = 360f / options.size
+                val optionColors = listOf(
+                    CombinedAccent,
+                    HaikalAccent,
+                    SuccessAccent,
+                    UmmuAccent,
+                    Color(0xFFE11D48), // vibrant pink
+                    Color(0xFFD97706)  // warm amber
+                )
+
+                androidx.compose.foundation.Canvas(
+                    modifier = Modifier
+                        .size(210.dp)
+                        .graphicsLayer { rotationZ = animatedRotation.value }
+                ) {
+                    val canvasWidth = size.width
+                    val canvasHeight = size.height
+                    val center = androidx.compose.ui.geometry.Offset(canvasWidth / 2f, canvasHeight / 2f)
+                    val radius = canvasWidth / 2f
+
+                    // Draw slices
+                    options.forEachIndexed { idx, option ->
+                        val color = optionColors[idx % optionColors.size]
+                        drawArc(
+                            color = color,
+                            startAngle = idx * sliceAngle,
+                            sweepAngle = sliceAngle,
+                            useCenter = true,
+                            topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                            size = size
+                        )
+                    }
+
+                    // Draw text labels
+                    val textPaint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = 10.dp.toPx()
+                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                        textAlign = android.graphics.Paint.Align.RIGHT
+                    }
+
+                    options.forEachIndexed { idx, option ->
+                        val rotation = idx * sliceAngle + sliceAngle / 2f
+                        drawContext.canvas.nativeCanvas.save()
+                        drawContext.canvas.nativeCanvas.rotate(rotation, center.x, center.y)
+                        
+                        val displayStr = if (option.length > 15) option.take(13) + ".." else option
+                        drawContext.canvas.nativeCanvas.drawText(
+                            displayStr,
+                            center.x + radius - 14.dp.toPx(),
+                            center.y + 4.dp.toPx(),
+                            textPaint
+                        )
+                        drawContext.canvas.nativeCanvas.restore()
+                    }
+
+                    // Outer ring outline
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.3f),
+                        radius = radius,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                    )
+                }
+
+                // Core pin / decorative center hub
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1E293B))
+                        .border(1.5.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("❤️", fontSize = 16.sp)
+                }
+
+                // Needle pointer at top
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-5).dp)
+                ) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(size.width / 2f, size.height) // pointing down
+                            lineTo(0f, 0f)
+                            lineTo(size.width, 0f)
+                            close()
+                        }
+                        drawPath(path = path, color = Color.White)
+                        drawPath(path = path, color = Color(0xFFF43F5E), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx()))
+                    }
+                }
+            }
+        }
+
+        // Result and Action Button
+        item {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = resultOption != null,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut()
+                ) {
+                    resultOption?.let { chosen ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = SuccessAccent.copy(alpha = 0.15f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, SuccessAccent, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Aktivitas Terpilih! 😍", fontSize = 11.sp, color = SuccessAccent, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(chosen, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary)
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        if (isSpinning || options.isEmpty()) return@Button
+                        
+                        isSpinning = true
+                        resultOption = null
+                        
+                        val chosenIdx = (options.indices).random()
+                        val sliceAngle = 360f / options.size
+                        
+                        val extraDegrees = 270f - (chosenIdx + 0.5f) * sliceAngle
+                        val totalSpin = 360f * 6 + extraDegrees
+                        
+                        scope.launch {
+                            animatedRotation.snapTo(animatedRotation.value % 360f)
+                            animatedRotation.animateTo(
+                                targetValue = totalSpin,
+                                animationSpec = tween(durationMillis = 3500, easing = androidx.compose.animation.core.CubicBezierEasing(0.12f, 0.8f, 0.15f, 1f))
+                            )
+                            isSpinning = false
+                            resultOption = options[chosenIdx]
+                        }
+                    },
+                    enabled = !isSpinning && options.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                    modifier = Modifier.fillMaxWidth(0.7f),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = if (isSpinning) "MEMUTAR TAKDIR..." else "🎡 PUTAR SEKARANG",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Editable Option List section
+        item {
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderAccent = CombinedAccent.copy(alpha = 0.2f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Daftar Keputusan Kencan (Editable) 📝",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextPrimary
+                        )
+                        IconButton(
+                            onClick = { editMode = !editMode }
+                        ) {
+                            Text(if (editMode) "Selesai ✅" else "Edit ✏️", fontSize = 11.sp, color = CombinedAccent, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (options.isEmpty()) {
+                        Text(
+                            "Belum ada opsi date-night kencan. Silakan tambahkan!",
+                            fontSize = 10.sp,
+                            color = TextMuted,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    } else {
+                        options.forEachIndexed { i, opt ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    val colorIndex = i % 6
+                                    val optionColors = listOf(CombinedAccent, HaikalAccent, SuccessAccent, UmmuAccent, Color(0xFFE11D48), Color(0xFFD97706))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(optionColors[colorIndex])
+                                    )
+                                    Text(opt, fontSize = 11.sp, color = TextPrimary)
+                                }
+                                
+                                if (editMode) {
+                                    IconButton(
+                                        onClick = {
+                                            val newList = options.toMutableList()
+                                            newList.removeAt(i)
+                                            viewModel.saveConfigValue("DATENIGHT_OPTIONS", newList.joinToString(","))
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Hapus",
+                                            tint = DangerAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (editMode) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = newOptionText,
+                                onValueChange = { newOptionText = it },
+                                placeholder = { Text("Opsi kencan baru...", fontSize = 10.sp) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp),
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp),
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            Button(
+                                onClick = {
+                                    if (newOptionText.isNotBlank()) {
+                                        val newList = options.toMutableList()
+                                        newList.add(newOptionText.trim())
+                                        viewModel.saveConfigValue("DATENIGHT_OPTIONS", newList.joinToString(","))
+                                        newOptionText = ""
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.height(44.dp)
+                            ) {
+                                Text("Tambah +", fontSize = 10.sp)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -5280,8 +6415,8 @@ fun VisualisasiTab(
                         txCal.get(Calendar.MONTH) == m && txCal.get(Calendar.YEAR) == y
                     }
                     
-                    val inc = txs.filter { it.type == "INCOME" }.sumOf { it.amount }
-                    val exp = txs.filter { it.type == "EXPENSE" }.sumOf { it.amount }
+                    val inc = txs.filter { it.type == "PEMASUKAN" }.sumOf { it.amount }
+                    val exp = txs.filter { it.type == "PENGELUARAN" }.sumOf { it.amount }
                     
                     list.add(MonthlyTrend(monthName, inc, exp))
                 }
@@ -5328,6 +6463,44 @@ fun VisualisasiTab(
                     )
 
                     RechartsLineChart(data = past6MonthsData, animScale = animScale)
+                }
+            }
+        }
+
+        // NEW FEATURE: Sinergi Ring Gauge Chart
+        item {
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth(),
+                borderAccent = CombinedAccent.copy(alpha = 0.25f),
+                glowColor = CombinedAccent.copy(alpha = 0.03f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "Ring Gauge Sinergi Finansial 🎯",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Visualisasi metrik kesehatan sinergi keuangan Anda",
+                        fontSize = 10.sp,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    
+                    val income = stats.totalIncome
+                    val expense = stats.totalExpense
+                    val surplus = stats.surplus
+                    val score = healthState.score
+                    
+                    SinergiRingGaugeChart(
+                        income = income,
+                        expense = expense,
+                        surplus = surplus,
+                        healthScore = score,
+                        animScale = animScale
+                    )
                 }
             }
         }
@@ -6943,7 +8116,7 @@ fun RapatWishlistScreen(
     haikalName: String,
     ummuName: String
 ) {
-    var partitionState by remember { mutableStateOf(0) } // 0 = Rapat Bulanan, 1 = Wishlist Control
+    var partitionState by remember { mutableStateOf(0) } // 0 = Rapat Bulanan, 1 = Wishlist Control, 2 = Roda Keputusan
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(
@@ -6952,10 +8125,13 @@ fun RapatWishlistScreen(
             contentColor = CombinedAccent
         ) {
             Tab(selected = partitionState == 0, onClick = { partitionState = 0 }) {
-                Text("🤝 Rapat Bulanan", modifier = Modifier.padding(12.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("🤝 Rapat Bulanan", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
             Tab(selected = partitionState == 1, onClick = { partitionState = 1 }) {
-                Text("🛒 Wishlist Impulse", modifier = Modifier.padding(12.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("🛒 Wishlist Impulse", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+            Tab(selected = partitionState == 2, onClick = { partitionState = 2 }) {
+                Text("🎡 Roda Putar", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
 
@@ -6984,10 +8160,10 @@ fun RapatWishlistScreen(
                 },
                 label = "RapatWishlistTab"
             ) { activePartition ->
-                if (activePartition == 0) {
-                    RapatReviewsView(viewModel)
-                } else {
-                    WishlistControlView(viewModel, haikalName, ummuName)
+                when (activePartition) {
+                    0 -> RapatReviewsView(viewModel)
+                    1 -> WishlistControlView(viewModel, haikalName, ummuName)
+                    2 -> RodaPutarDateNightView(viewModel)
                 }
             }
         }

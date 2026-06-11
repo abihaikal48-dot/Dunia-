@@ -462,6 +462,55 @@ class DuniaViewModel(
     // OPERATIONS (DATABASE ACTIONS)
     // ==========================================
 
+    // --- PARTNER NOTIFICATION SYSTEM ---
+    private val _notificationFlow = MutableSharedFlow<Pair<String, String>>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+    val notificationFlow = _notificationFlow.asSharedFlow()
+
+    fun triggerPartnerNotification(tx: TransactionEntity) {
+        val configData = configs.value
+        val haikalName = configData["NAMA_HAIKAL"] ?: "Haikal"
+        val ummuName = configData["NAMA_UMMU"] ?: "Ummu"
+
+        val formattedAmount = try {
+            val numberFormat = java.text.NumberFormat.getCurrencyInstance(Locale("id", "ID"))
+            numberFormat.format(tx.amount).replace("Rp", "Rp ").replace(",00", "").replace(".00", "")
+        } catch (e: Exception) {
+            "Rp ${tx.amount.toLong()}"
+        }
+
+        val typeStr = if (tx.type == "PEMASUKAN") "pemasukan" else "pengeluaran"
+        val emoji = if (tx.type == "PEMASUKAN") "💰" else "💸"
+
+        val senderName = when (tx.user) {
+            "HAIKAL" -> haikalName
+            "UMMU" -> ummuName
+            else -> "Sinergi Bersama"
+        }
+
+        val partnerName = when (tx.user) {
+            "HAIKAL" -> ummuName
+            "UMMU" -> haikalName
+            else -> "$haikalName & $ummuName"
+        }
+
+        val title = if (tx.user == "BERDUA" || tx.user == "BERSAMA") {
+            "Sinergi Bersama Tercatat! 👥"
+        } else {
+            "Hai $partnerName, ada $typeStr baru dari $senderName! $emoji"
+        }
+
+        val message = if (tx.user == "BERDUA" || tx.user == "BERSAMA") {
+            "Transaksi '${tx.description}' sebesar $formattedAmount dicatat ke pos bersama."
+        } else {
+            "$senderName baru saja mencatat ${tx.description} sebesar $formattedAmount."
+        }
+
+        _notificationFlow.tryEmit(Pair(title, message))
+    }
+
     fun addTransaction(
         type: String,
         user: String,
@@ -472,18 +521,18 @@ class DuniaViewModel(
         imageUri: String? = null
     ) {
         viewModelScope.launch {
-            repository.insertTransaction(
-                TransactionEntity(
-                    timestamp = System.currentTimeMillis(),
-                    type = type,
-                    user = user,
-                    amount = amount,
-                    category = category,
-                    description = description,
-                    tag = tag,
-                    imageUri = imageUri
-                )
+            val entity = TransactionEntity(
+                timestamp = System.currentTimeMillis(),
+                type = type,
+                user = user,
+                amount = amount,
+                category = category,
+                description = description,
+                tag = tag,
+                imageUri = imageUri
             )
+            repository.insertTransaction(entity)
+            triggerPartnerNotification(entity)
         }
     }
 
@@ -518,18 +567,17 @@ class DuniaViewModel(
                 repository.updateSavingGoal(
                     goal.copy(currentAmount = goal.currentAmount + amount)
                 )
-                // Log this as a special positive transaction that tracks saving activity!
-                repository.insertTransaction(
-                    TransactionEntity(
-                        timestamp = System.currentTimeMillis(),
-                        type = "PENGELUARAN", // saving acts as cash out flow from wallet
-                        user = goal.owner,
-                        amount = amount,
-                        category = "Tabungan & Investasi",
-                        description = "Nabung ke: ${goal.name}",
-                        tag = "#nabung"
-                    )
+                val entity = TransactionEntity(
+                    timestamp = System.currentTimeMillis(),
+                    type = "PENGELUARAN", // saving acts as cash out flow from wallet
+                    user = goal.owner,
+                    amount = amount,
+                    category = "Tabungan & Investasi",
+                    description = "Nabung ke: ${goal.name}",
+                    tag = "#nabung"
                 )
+                repository.insertTransaction(entity)
+                triggerPartnerNotification(entity)
             }
         }
     }
@@ -592,18 +640,17 @@ class DuniaViewModel(
                 )
                 repository.updateCicilan(updated)
 
-                // Insert pay transaction log
-                repository.insertTransaction(
-                    TransactionEntity(
-                        timestamp = System.currentTimeMillis(),
-                        type = "PENGELUARAN",
-                        user = cicilanObj.owner,
-                        amount = cicilanObj.monthlyPayment,
-                        category = "Cicilan",
-                        description = "Bayar ${cicilanObj.name} (Bulan ${updated.paidMonths})",
-                        tag = "#rutin"
-                    )
+                val entity = TransactionEntity(
+                    timestamp = System.currentTimeMillis(),
+                    type = "PENGELUARAN",
+                    user = cicilanObj.owner,
+                    amount = cicilanObj.monthlyPayment,
+                    category = "Cicilan",
+                    description = "Bayar ${cicilanObj.name} (Bulan ${updated.paidMonths})",
+                    tag = "#rutin"
                 )
+                repository.insertTransaction(entity)
+                triggerPartnerNotification(entity)
             }
         }
     }
