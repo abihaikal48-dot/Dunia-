@@ -162,6 +162,9 @@ interface DuniaDao {
     @Update
     suspend fun updateMilestone(milestone: MilestoneEntity)
 
+    @Delete
+    suspend fun deleteMilestone(milestone: MilestoneEntity)
+
     // Activities
     @Query("SELECT * FROM activities ORDER BY startTime ASC")
     fun getAllActivities(): Flow<List<ActivityEntity>>

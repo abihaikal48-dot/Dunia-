@@ -628,6 +628,24 @@ class DuniaViewModel(
         }
     }
 
+    fun insertMilestone(fase: Int, title: String, description: String, targetDate: String) {
+        viewModelScope.launch {
+            repository.insertMilestone(MilestoneEntity(0, fase, title, description, targetDate, false))
+        }
+    }
+
+    fun updateMilestoneDetails(milestone: MilestoneEntity) {
+        viewModelScope.launch {
+            repository.updateMilestone(milestone)
+        }
+    }
+
+    fun deleteMilestone(milestone: MilestoneEntity) {
+        viewModelScope.launch {
+            repository.deleteMilestone(milestone)
+        }
+    }
+
     fun addActivity(name: String, start: String, end: String, owner: String, saves: Boolean, category: String) {
         viewModelScope.launch {
             repository.insertActivity(ActivityEntity(0, name, start, end, owner, saves, category))

@@ -46,6 +46,7 @@ class DuniaRepository(private val dao: DuniaDao) {
 
     suspend fun insertMilestone(milestone: MilestoneEntity) = dao.insertMilestone(milestone)
     suspend fun updateMilestone(milestone: MilestoneEntity) = dao.updateMilestone(milestone)
+    suspend fun deleteMilestone(milestone: MilestoneEntity) = dao.deleteMilestone(milestone)
 
     suspend fun insertActivity(activity: ActivityEntity) = dao.insertActivity(activity)
     suspend fun deleteActivity(activity: ActivityEntity) = dao.deleteActivity(activity)

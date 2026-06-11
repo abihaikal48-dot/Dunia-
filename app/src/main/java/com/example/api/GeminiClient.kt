@@ -95,12 +95,26 @@ object GeminiClient {
             generationConfig = GenerationConfig(temperature = 0.7f)
         )
 
-        try {
-            val response = RetrofitClient.service.generateContent(apiKey, request)
-            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "DUNIA AI tidak mengembalikan respon. Silakan coba tanyakan kembali."
-        } catch (e: Exception) {
-            "Gagal mendapatkan respon dari DUNIA AI: ${e.localizedMessage}. Silakan coba periksa koneksi internet Anda."
+        var lastErr: Exception? = null
+        for (attempt in 1..2) {
+            try {
+                val response = RetrofitClient.service.generateContent(apiKey, request)
+                return@withContext response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    ?: "DUNIA AI tidak mengembalikan respon. Silakan coba tanyakan kembali."
+            } catch (e: Exception) {
+                lastErr = e
+                if (attempt < 2) {
+                    // Quick sleep before retry for transient 503
+                    kotlinx.coroutines.delay(1200)
+                }
+            }
+        }
+
+        val errMsg = lastErr?.localizedMessage ?: "Koneksi terputus"
+        if (errMsg.contains("503") || errMsg.contains("Service Unavailable")) {
+            "DUNIA AI (Gemini) sedang mengalami kepadatan lalu lintas server (HTTP 503). Silakan tunggu sekitar 5 detik lalu kirim ulang pesan Anda ✨"
+        } else {
+            "Gagal mendapatkan respon dari DUNIA AI: $errMsg. Silakan periksa koneksi internet Anda atau coba kembali."
         }
     }
 }
