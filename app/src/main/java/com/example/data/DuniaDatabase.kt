@@ -107,18 +107,6 @@ data class ConfigEntity(
     val value: String
 )
 
-@Entity(tableName = "events")
-data class EventEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val title: String,
-    val dateStr: String, // YYYY-MM-DD
-    val timeStr: String, // HH:MM
-    val type: String, // "KENCAN", "PERGI/LIBURAN", "RAPAT", "HARI_PENTING", "LAINNYA"
-    val notes: String,
-    val owner: String, // "HAIKAL", "UMMU", "BERDUA"
-    val reminded: Boolean = false
-)
-
 // ==========================================
 // 2. DAOS
 // ==========================================
@@ -233,19 +221,6 @@ interface DuniaDao {
     @Query("DELETE FROM sys_config WHERE `key` = :key")
     suspend fun deleteConfigByKey(key: String)
 
-    // Events
-    @Query("SELECT * FROM events ORDER BY dateStr ASC, timeStr ASC")
-    fun getAllEvents(): Flow<List<EventEntity>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertEvent(event: EventEntity)
-
-    @Update
-    suspend fun updateEvent(event: EventEntity)
-
-    @Delete
-    suspend fun deleteEvent(event: EventEntity)
-
     @Query("DELETE FROM transactions")
     suspend fun clearTransactions()
 
@@ -272,9 +247,6 @@ interface DuniaDao {
 
     @Query("DELETE FROM sys_config")
     suspend fun clearConfigs()
-
-    @Query("DELETE FROM events")
-    suspend fun clearEvents()
 }
 
 // ==========================================
@@ -291,10 +263,9 @@ interface DuniaDao {
         IbadahEntity::class,
         RapatEntity::class,
         WishlistEntity::class,
-        ConfigEntity::class,
-        EventEntity::class
+        ConfigEntity::class
     ],
-    version = 4,
+    version = 3,
     exportSchema = false
 )
 abstract class DuniaDatabase : RoomDatabase() {
@@ -466,15 +437,6 @@ abstract class DuniaDatabase : RoomDatabase() {
                 "1. Membawa bekal setiap hari (Haikal)\n2. Mencari tambahan koki sambilan / freelance logo (Ummu)"
             )
             dao.insertRapat(rapat)
-
-            // Seed Events
-            val events = listOf(
-                EventEntity(0, "Makan Malam Romantis Anniversary #1", "2026-06-20", "19:00", "KENCAN", "Anniversary pacaran 10 hari / 1 bulan pertama. Budget hemat sesuai plan.", "BERDUA"),
-                EventEntity(0, "Rapat Finansial Sinergi Bulanan", "2026-06-15", "20:00", "RAPAT", "Evaluasi target tabungan nikah & pos pengeluaran.", "BERDUA"),
-                EventEntity(0, "Piknik Akhir Pekan ke Pantai Parangtritis", "2026-06-28", "15:30", "PERGI/LIBURAN", "Refreshing hemat bawa nasi kotak sendiri dari rumah.", "BERDUA"),
-                EventEntity(0, "Ummu Sketsa Deadline Review", "2026-06-12", "10:00", "LAINNYA", "Review portfolio brief client bareng-bareng.", "UMMU")
-            )
-            events.forEach { dao.insertEvent(it) }
         }
     }
 }

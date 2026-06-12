@@ -8,7 +8,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
-import retrofit2.http.Path
 import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -17,9 +16,8 @@ import kotlinx.coroutines.withContext
 // --- Retrofit API Interface ---
 
 interface GeminiApiService {
-    @POST("v1beta/models/{model}:generateContent")
+    @POST("v1beta/models/gemini-3.5-flash:generateContent")
     suspend fun generateContent(
-        @Path("model") model: String,
         @Query("key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
@@ -29,20 +27,19 @@ interface GeminiApiService {
 
 @JsonClass(generateAdapter = true)
 data class GenerateContentRequest(
-    val contents: List<Content>? = null,
+    val contents: List<Content>,
     val generationConfig: GenerationConfig? = null,
     val systemInstruction: Content? = null
 )
 
 @JsonClass(generateAdapter = true)
 data class Content(
-    val parts: List<Part>? = null,
-    val role: String? = null
+    val parts: List<Part>
 )
 
 @JsonClass(generateAdapter = true)
 data class Part(
-    val text: String? = null
+    val text: String
 )
 
 @JsonClass(generateAdapter = true)
@@ -99,27 +96,16 @@ object GeminiClient {
         )
 
         var lastErr: Exception? = null
-        val modelsToTry = listOf("gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash")
-        
-        for (model in modelsToTry) {
-            for (attempt in 1..2) {
-                try {
-                    val response = RetrofitClient.service.generateContent(model, apiKey, request)
-                    val resultText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                    if (resultText != null) {
-                        return@withContext resultText
-                    }
-                } catch (e: retrofit2.HttpException) {
-                    val errorBody = e.response()?.errorBody()?.string() ?: ""
-                    lastErr = Exception("HTTP ${e.code()}: $errorBody", e)
-                    if (e.code() == 404 || e.code() == 400 || e.code() == 403) {
-                        break // Try next model on configuration error
-                    }
-                } catch (e: Exception) {
-                    lastErr = e
-                    if (attempt < 2) {
-                        kotlinx.coroutines.delay(1000)
-                    }
+        for (attempt in 1..2) {
+            try {
+                val response = RetrofitClient.service.generateContent(apiKey, request)
+                return@withContext response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    ?: "DUNIA AI tidak mengembalikan respon. Silakan coba tanyakan kembali."
+            } catch (e: Exception) {
+                lastErr = e
+                if (attempt < 2) {
+                    // Quick sleep before retry for transient 503
+                    kotlinx.coroutines.delay(1200)
                 }
             }
         }

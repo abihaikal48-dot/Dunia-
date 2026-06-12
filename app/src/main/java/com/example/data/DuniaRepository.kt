@@ -14,7 +14,6 @@ class DuniaRepository(private val dao: DuniaDao) {
     val allRapat: Flow<List<RapatEntity>> = dao.getAllRapat()
     val allWishlist: Flow<List<WishlistEntity>> = dao.getAllWishlist()
     val allConfigs: Flow<List<ConfigEntity>> = dao.getAllConfigs()
-    val allEvents: Flow<List<EventEntity>> = dao.getAllEvents()
 
     // Key-Value config helper map
     val configMap: Flow<Map<String, String>> = dao.getAllConfigs().map { list ->
@@ -61,10 +60,6 @@ class DuniaRepository(private val dao: DuniaDao) {
     suspend fun updateWishlist(wishlist: WishlistEntity) = dao.updateWishlist(wishlist)
     suspend fun deleteWishlist(wishlist: WishlistEntity) = dao.deleteWishlist(wishlist)
 
-    suspend fun insertEvent(event: EventEntity) = dao.insertEvent(event)
-    suspend fun updateEvent(event: EventEntity) = dao.updateEvent(event)
-    suspend fun deleteEvent(event: EventEntity) = dao.deleteEvent(event)
-
     suspend fun clearAllData() {
         dao.clearTransactions()
         dao.clearSavingGoals()
@@ -75,7 +70,6 @@ class DuniaRepository(private val dao: DuniaDao) {
         dao.clearRapat()
         dao.clearWishlist()
         dao.clearConfigs()
-        dao.clearEvents()
     }
 
     suspend fun insertTransactions(list: List<TransactionEntity>) {
@@ -101,9 +95,6 @@ class DuniaRepository(private val dao: DuniaDao) {
     }
     suspend fun insertWishlistItems(list: List<WishlistEntity>) {
         list.forEach { dao.insertWishlist(it) }
-    }
-    suspend fun insertEventsList(list: List<EventEntity>) {
-        list.forEach { dao.insertEvent(it) }
     }
     suspend fun insertConfigs(list: List<ConfigEntity>) {
         dao.insertConfigs(list)
