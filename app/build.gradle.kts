@@ -120,38 +120,40 @@ dependencies {
   "ksp"(libs.moshi.kotlin.codegen)
 }
 
-tasks.register<Copy>("copyApkToBuiltApp") {
-    dependsOn("packageDebug")
-    from(layout.buildDirectory.dir("outputs/apk/debug"))
-    include("app-debug.apk")
-    into(rootProject.layout.projectDirectory.dir("built-app"))
-}
-
-tasks.register<Copy>("copyApkToBuiltAppAlt") {
-    dependsOn("packageDebug")
-    from(layout.buildDirectory.dir("outputs/apk/debug"))
-    include("app-debug.apk")
-    into(rootProject.layout.projectDirectory.dir("builtapp"))
-}
-
-tasks.register<Copy>("copyApkToBuiltAppRename") {
-    dependsOn("packageDebug")
-    from(layout.buildDirectory.dir("outputs/apk/debug"))
-    include("app-debug.apk")
-    into(rootProject.layout.projectDirectory.dir("built-app"))
-    rename { "app.debug" }
-}
-
-tasks.register<Copy>("copyApkToBuiltAppRenameAlt") {
-    dependsOn("packageDebug")
-    from(layout.buildDirectory.dir("outputs/apk/debug"))
-    include("app-debug.apk")
-    into(rootProject.layout.projectDirectory.dir("builtapp"))
-    rename { "app.debug" }
-}
+val rootDirFile = rootProject.projectDir
+val buildDirFile = layout.buildDirectory.asFile.get()
 
 tasks.register("copyApkToBuiltDirs") {
-    dependsOn("copyApkToBuiltApp", "copyApkToBuiltAppAlt", "copyApkToBuiltAppRename", "copyApkToBuiltAppRenameAlt")
+    dependsOn("packageDebug")
+    
+    val apkFile = File(buildDirFile, "outputs/apk/debug/app-debug.apk")
+    val destRootApk = File(rootDirFile, "app-debug.apk")
+    val destRootRename = File(rootDirFile, "app.debug")
+    val destDir1Apk = File(rootDirFile, "built-app/app-debug.apk")
+    val destDir1Rename = File(rootDirFile, "built-app/app.debug")
+    val destDir2Apk = File(rootDirFile, "builtapp/app-debug.apk")
+    val destDir2Rename = File(rootDirFile, "builtapp/app.debug")
+    
+    inputs.file(apkFile)
+    outputs.files(destRootApk, destRootRename, destDir1Apk, destDir1Rename, destDir2Apk, destDir2Rename)
+    
+    doLast {
+        if (apkFile.exists()) {
+            destDir1Apk.parentFile.mkdirs()
+            destDir2Apk.parentFile.mkdirs()
+            
+            apkFile.copyTo(destRootApk, overwrite = true)
+            apkFile.copyTo(destRootRename, overwrite = true)
+            apkFile.copyTo(destDir1Apk, overwrite = true)
+            apkFile.copyTo(destDir1Rename, overwrite = true)
+            apkFile.copyTo(destDir2Apk, overwrite = true)
+            apkFile.copyTo(destDir2Rename, overwrite = true)
+            
+            println("APK successfully copied to all folders! Size: ${apkFile.length() / (1024 * 1024.0)} MB")
+        } else {
+            println("APK not found at ${apkFile.absolutePath}")
+        }
+    }
 }
 
 afterEvaluate {
