@@ -133,14 +133,16 @@ tasks.register("copyApkToBuiltDirs") {
     val destDir1Rename = File(rootDirFile, "built-app/app.debug")
     val destDir2Apk = File(rootDirFile, "builtapp/app-debug.apk")
     val destDir2Rename = File(rootDirFile, "builtapp/app.debug")
+    val destBuildOutputsApk = File(rootDirFile, ".build-outputs/app-debug.apk")
     
     inputs.file(apkFile)
-    outputs.files(destRootApk, destRootRename, destDir1Apk, destDir1Rename, destDir2Apk, destDir2Rename)
+    outputs.files(destRootApk, destRootRename, destDir1Apk, destDir1Rename, destDir2Apk, destDir2Rename, destBuildOutputsApk)
     
     doLast {
         if (apkFile.exists()) {
             destDir1Apk.parentFile.mkdirs()
             destDir2Apk.parentFile.mkdirs()
+            destBuildOutputsApk.parentFile.mkdirs()
             
             apkFile.copyTo(destRootApk, overwrite = true)
             apkFile.copyTo(destRootRename, overwrite = true)
@@ -148,8 +150,9 @@ tasks.register("copyApkToBuiltDirs") {
             apkFile.copyTo(destDir1Rename, overwrite = true)
             apkFile.copyTo(destDir2Apk, overwrite = true)
             apkFile.copyTo(destDir2Rename, overwrite = true)
+            apkFile.copyTo(destBuildOutputsApk, overwrite = true)
             
-            println("APK successfully copied to all folders! Size: ${apkFile.length() / (1024 * 1024.0)} MB")
+            println("APK successfully copied to all folders including .build-outputs! Size: ${apkFile.length() / (1024 * 1024.0)} MB")
         } else {
             println("APK not found at ${apkFile.absolutePath}")
         }
