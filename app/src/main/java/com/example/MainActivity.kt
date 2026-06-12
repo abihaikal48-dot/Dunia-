@@ -14,6 +14,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -602,7 +604,7 @@ fun MainScreenShell(viewModel: DuniaViewModel) {
             }
         }
     }
-    }
+}
 }
 
 // ==========================================
@@ -675,8 +677,72 @@ fun DashboardScreen(
     val health by viewModel.financialHealthScore.collectAsState()
     val countdown by viewModel.targetsCountdown.collectAsState()
     val configs by viewModel.configs.collectAsState()
+    val ibadahLogs by viewModel.ibadahLogs.collectAsState()
+
+    // Feature 3: Mutual Gratitude Bulletin States
+    val gratitudeJson = configs["MUTUAL_GRATITUDE_JSON"] ?: "[]"
+
+    val couplingSynergyData = remember(health, configs, ibadahLogs, gratitudeJson) {
+        val fHealth = health.score
+        
+        // 1. Gratitude Count
+        val gratitudeListSize = try { org.json.JSONArray(gratitudeJson).length() } catch (e: Exception) { 0 }
+        val gratitudePct = (gratitudeListSize * 33).coerceAtMost(100)
+        
+        // 2. Challenge Progress
+        val challengeProgressStr = configs["SAVING_CHALLENGE_PROGRESS"] ?: "000000000000000000000000000000"
+        val challengeDays = challengeProgressStr.count { it == '1' }
+        val challengePct = ((challengeDays / 30f) * 100f).toInt()
+        
+        // 3. Spiritual Sync
+        val rawSpiritual = if (ibadahLogs.isEmpty()) 65 else {
+            val totalSlots = ibadahLogs.size * 5
+            var checkCount = 0
+            ibadahLogs.forEach { log ->
+                if (log.subuh) checkCount++
+                if (log.dzuhur) checkCount++
+                if (log.ashar) checkCount++
+                if (log.maghrib) checkCount++
+                if (log.isya) checkCount++
+            }
+            if (totalSlots > 0) ((checkCount.toFloat() / totalSlots) * 100f).toInt() else 65
+        }
+        val spiritualPct = rawSpiritual.coerceIn(40, 100)
+        
+        val totalComposite = (fHealth * 0.35f + gratitudePct * 0.25f + challengePct * 0.20f + spiritualPct * 0.20f).toInt().coerceIn(0, 100)
+        
+        val statusTier = when (totalComposite) {
+            in 0..40 -> "Sinergi Awal 🌱 (Butuh Kopi Keliling & Deep Talk)"
+            in 41..74 -> "Sinergi Harmonis ⚡ (Menuju Selaras)"
+            else -> "Sinergi Sempurna ❤️ (Jiwa Raga Finansial Selaras)"
+        }
+        
+        val adviceText = when {
+            fHealth < 50 -> "Keuangan sedang agak bocor! Yuk, ajak pasangan diskusi anggaran akhir pekan ini, tunda belanja wishlist & buat target masak bareng di rumah."
+            gratitudePct < 40 -> "Romantisme butuh bumbu apresiasi! Coba tulis 1 catatan terima kasih yang tulus di Bulletin Syukur untuk menyemangati harinya."
+            challengePct < 30 -> "Tantangan Menabung 30 Hari kalian agak kendor. Yuk, saling ingatkan setiap sore untuk tap check-in hemat harian!"
+            spiritualPct < 60 -> "Mendirikan ibadah bersama membawa berkah rezeki melimpah. Mari agendakan shalat berjamaah atau tilawah bersama malam ini."
+            else -> "Luar biasa! Seluruh dimensi sinergi (Keuangan, Komunikasi, Habit, dan Spiritual) kalian sangat prima. Terus pertahankan ritme ini menuju 2029/2030!"
+        }
+        
+        CompositeSynergy(
+            compositeScore = totalComposite,
+            tier = statusTier,
+            financePct = fHealth,
+            gratitudePct = gratitudePct,
+            challengePct = challengePct,
+            spiritualPct = spiritualPct,
+            advice = adviceText
+        )
+    }
 
     var activeTab by remember { mutableStateOf(2) } // 0 = Haikal, 1 = Ummu, 2 = Berdua
+    
+    // Feature 1: Financial Health Score Detail Dialog
+    var showHealthDetailDialog by remember { mutableStateOf(false) }
+
+    val deviceOwnerRole by viewModel.deviceOwnerState.collectAsState()
+    var gratitudeInputText by remember { mutableStateOf("") }
 
     val activeIncome = when (activeTab) {
         0 -> stats.haikalIncome
@@ -1021,8 +1087,13 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column {
-                        Text("Financial Health Score", fontSize = 11.sp, color = TextSecondary)
+                    Column(
+                        modifier = Modifier
+                            .clickable { showHealthDetailDialog = true }
+                            .padding(end = 8.dp)
+                            .testTag("health_score_clickable")
+                    ) {
+                        Text("Financial Health Score 📊", fontSize = 11.sp, color = CombinedAccent, fontWeight = FontWeight.Bold)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Box(
                                 modifier = Modifier
@@ -1036,7 +1107,7 @@ fun DashboardScreen(
                                 else -> "Sangat Prima"
                             }
                             Text(
-                                text = "${health.score}% - $healthStatus",
+                                text = "${health.score}% - $healthStatus (Detail 💬)",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (health.score >= 70) SuccessAccent else if (health.score >= 40) WarningAccent else DangerAccent
@@ -1052,6 +1123,323 @@ fun DashboardScreen(
                         Text("Analisa AI", color = CombinedAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+
+                // Feature 1: Financial Health Score Detail Dialog
+                if (showHealthDetailDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showHealthDetailDialog = false },
+                        containerColor = BgCard,
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("📈 Detail Kesehatan Finansial", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            }
+                        },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(
+                                    text = "Skor kesehatan dihitung otomatis berdasarkan sinergi keuangan bulanan Haikal & Ummu:",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary
+                                )
+
+                                // Progress bars
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    // 1. Saving Rate
+                                    Column {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Rasio Tabungan", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                            Text("${health.savingRate}% / Target 20%+", fontSize = 11.sp, color = if (health.savingRate >= 20) SuccessAccent else WarningAccent)
+                                        }
+                                        Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(BgDeep).padding(top = 2.dp)) {
+                                            Box(modifier = Modifier.fillMaxHeight().fillMaxWidth((health.savingRate / 100f).coerceIn(0f, 1f)).background(if (health.savingRate >= 20) SuccessAccent else WarningAccent))
+                                        }
+                                    }
+
+                                    // 2. Debt to Income
+                                    Column {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Rasio Beban Cicilan", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                            Text("${health.debtRatio}% / Batas 30%", fontSize = 11.sp, color = if (health.debtRatio <= 30) SuccessAccent else DangerAccent)
+                                        }
+                                        Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(BgDeep).padding(top = 2.dp)) {
+                                            Box(modifier = Modifier.fillMaxHeight().fillMaxWidth((health.debtRatio / 100f).coerceIn(0f, 1f)).background(if (health.debtRatio <= 30) SuccessAccent else DangerAccent))
+                                        }
+                                    }
+
+                                    // 3. Kebocoran Anggaran
+                                    Column {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Pos Anggaran Melebihi Batas", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                            Text("${health.overLimitCount} Kebocoran", fontSize = 11.sp, color = if (health.overLimitCount == 0) SuccessAccent else DangerAccent)
+                                        }
+                                    }
+
+                                    // 4. Catat Keaktifan
+                                    Column {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Keaktifan Mencatat Keuangan", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                            Text("${health.activeRecordingDays} Hari / 30 Hari terakhir", fontSize = 11.sp, color = CombinedAccent)
+                                        }
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(CombinedAccent.copy(alpha = 0.08f))
+                                        .padding(10.dp)
+                                ) {
+                                    val advice = when (health.score) {
+                                        in 0..40 -> "Saran Sinergi: Lakukan kencan hemat dan minimalkan belanja impulsif di minggu ini. Rapatkan pengeluaran hobi terlebih dahulu ya!"
+                                        in 41..70 -> "Saran Sinergi: Keuangan berada di tingkat cukup stabil. Pastikan menabung rutin di awal bulan sebelum jajan wishlist kalian."
+                                        else -> "Saran Sinergi: Sinergi luar biasa! Tetap konsisten dan pertahankan performa ini demi pernikahan idaman terlaksana dengan berkah!"
+                                    }
+                                    Text(advice, fontSize = 10.sp, color = CombinedAccent, lineHeight = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = { showHealthDetailDialog = false },
+                                colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                            ) {
+                                Text("Mantap", color = Color.White)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // --- RANTAI SINERGI KITA (Couple Synergy Hub) ---
+        item {
+            var showSynergyTipsDialog by remember { mutableStateOf(false) }
+            
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth().testTag("couple_synergy_card"),
+                borderAccent = CombinedAccent,
+                glowColor = CombinedAccent.copy(alpha = 0.12f)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("💞", fontSize = 18.sp)
+                            Column {
+                                Text(
+                                    text = "Rantai Sinergi Kita",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "Evaluasi kelarasan hubungan & finansial harian",
+                                    fontSize = 9.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                        
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(SuccessAccent.copy(alpha = 0.15f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "Live Sync 🪄",
+                                fontSize = 8.sp,
+                                color = SuccessAccent,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Core Gauge Progress & Description
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Circular Dial / Huge percentage representation
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                // Background circle track
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.08f),
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6.dp.toPx())
+                                )
+                                // Active arc representation
+                                drawArc(
+                                    color = CombinedAccent,
+                                    startAngle = -90f,
+                                    sweepAngle = (couplingSynergyData.compositeScore / 100f) * 360f,
+                                    useCenter = false,
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                        width = 6.dp.toPx(),
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                                    )
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "${couplingSynergyData.compositeScore}%",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Sinergi",
+                                    fontSize = 7.sp,
+                                    color = TextSecondary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        // Status Level Description & Active Tip button
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Tingkat Keselarasan kita:",
+                                fontSize = 9.sp,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = couplingSynergyData.tier,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Komposit harmonis dari 4 pilar hidup bersama.",
+                                fontSize = 9.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = BorderColor.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Grid Layout representing sub-pillars
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            // Pillar 1: Financial Health
+                            SynergyPillarItem(
+                                modifier = Modifier.weight(1f),
+                                label = "💰 Keuangan",
+                                percentage = couplingSynergyData.financePct,
+                                trackColor = HaikalAccent
+                            )
+                            // Pillar 2: Gratitude
+                            SynergyPillarItem(
+                                modifier = Modifier.weight(1f),
+                                label = "💌 Apresiasi",
+                                percentage = couplingSynergyData.gratitudePct,
+                                trackColor = CombinedAccent
+                            )
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            // Pillar 3: Habit
+                            SynergyPillarItem(
+                                modifier = Modifier.weight(1f),
+                                label = "🏆 Habit Hemat",
+                                percentage = couplingSynergyData.challengePct,
+                                trackColor = SuccessAccent
+                            )
+                            // Pillar 4: Spiritual
+                            SynergyPillarItem(
+                                modifier = Modifier.weight(1f),
+                                label = "🕌 Spiritual",
+                                percentage = couplingSynergyData.spiritualPct,
+                                trackColor = UmmuAccent
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Button to pull active advice
+                    Button(
+                        onClick = { showSynergyTipsDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent.copy(alpha = 0.15f)),
+                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🪄", fontSize = 11.sp)
+                            Text("Bisikkan Tips Sinergi Pasangan", color = CombinedAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            if (showSynergyTipsDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSynergyTipsDialog = false },
+                    containerColor = BgCard,
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("💖 Bimbingan Sinergi Pasangan", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(BgDeep)
+                                    .padding(10.dp)
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("🤖", fontSize = 20.sp)
+                                    Column {
+                                        Text(
+                                            "DUNIA AI Whisperer Advice:",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CombinedAccent,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = couplingSynergyData.advice,
+                                            fontSize = 11.sp,
+                                            color = TextPrimary,
+                                            lineHeight = 15.sp
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            Text(
+                                text = "Tips Tambahan: Luangkan waktu 15 menit setiap pekan untuk mereview bersama, menulis ucapan terima kasih di bulletin syukur, dan memutar roda keputusan date night!",
+                                fontSize = 9.5.sp,
+                                color = TextSecondary,
+                                lineHeight = 13.sp
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSynergyTipsDialog = false }) {
+                            Text("Kerjakan Sinergi ✨", color = CombinedAccent, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                )
             }
         }
 
@@ -1877,6 +2265,262 @@ fun DashboardScreen(
             }
         }
 
+        // Feature 2: Sinyal Siaga Impulsif
+        item {
+            val totalImpulsiveThisMonth = remember(allTransactions) {
+                val cal = Calendar.getInstance()
+                cal.set(Calendar.DAY_OF_MONTH, 1)
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val startOfAndMonth = cal.timeInMillis
+                allTransactions.filter { tx ->
+                    tx.timestamp >= startOfAndMonth && 
+                    tx.type == "PENGELUARAN" && 
+                    tx.tag.equals("#impulsif", ignoreCase = true)
+                }.sumOf { it.amount }
+            }
+            val limitImpulsif = configs["LIMIT_IMPULSIF"]?.toDoubleOrNull() ?: 500000.0
+
+            if (totalImpulsiveThisMonth > 0) {
+                val percentOfLimit = (totalImpulsiveThisMonth / limitImpulsif * 100).toInt()
+                val isLimitExceeded = totalImpulsiveThisMonth > limitImpulsif
+                GlassMorphicCard(
+                    modifier = Modifier.fillMaxWidth().testTag("impulsive_detector_card"),
+                    borderAccent = if (isLimitExceeded) DangerAccent else WarningAccent,
+                    glowColor = if (isLimitExceeded) DangerAccent else WarningAccent
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (isLimitExceeded) "🚨" else "⚠️", fontSize = 16.sp)
+                            Column {
+                                Text(
+                                    text = "DETEKTOR BELANJA IMPULSIF 🛒",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isLimitExceeded) DangerAccent else WarningAccent,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "Batas aman jajan impulsif bulan ini: ${formatRupiah(limitImpulsif)}",
+                                    fontSize = 9.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Pengeluaran Impulsif:",
+                                fontSize = 11.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "${formatRupiah(totalImpulsiveThisMonth)} (${percentOfLimit}%)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isLimitExceeded) DangerAccent else WarningAccent
+                            )
+                        }
+
+                        // Progress Bar
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape)
+                                .background(BgDeep)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth((totalImpulsiveThisMonth / limitImpulsif).toFloat().coerceIn(0f, 1f))
+                                    .background(if (isLimitExceeded) DangerAccent else WarningAccent)
+                            )
+                        }
+
+                        Text(
+                            text = if (isLimitExceeded) {
+                                "Eits, jajanan impulsif kita sudah melebihi batas nih! Yuk rem belanja jajan non-rutin bareng demi tabungan nikah kita! 🚗💨"
+                            } else {
+                                "Jajanan impulsif kita masih di dalam batas aman. Tetap sinergis dan hemat ya!"
+                            },
+                            fontSize = 10.sp,
+                            color = TextSecondary,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // Feature 3: Jurnal Gratitude Syukur Berdua
+        item {
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth().testTag("gratitude_card"),
+                borderAccent = CombinedAccent,
+                glowColor = CombinedAccent
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("💖", fontSize = 16.sp)
+                            Column {
+                                Text(
+                                    text = "Jurnal Syukur Berdua ✨",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "Tulis hal manis yang kamu syukuri dari pasanganmu hari ini!",
+                                    fontSize = 9.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                    }
+
+                    val arr = try {
+                        org.json.JSONArray(gratitudeJson)
+                    } catch (e: Exception) {
+                        org.json.JSONArray()
+                    }
+
+                    if (arr.length() == 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(BgDeep)
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Belum ada ungkapan syukur tertulis. Yuk jadi yang pertama mengucapkan terima kasih hari ini! 💕",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val notes = mutableListOf<Triple<Long, String, String>>()
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                notes.add(
+                                    Triple(
+                                        obj.optLong("timestamp", 0L),
+                                        obj.optString("text", ""),
+                                        obj.optString("sender", "HAIKAL")
+                                    )
+                                )
+                            }
+                            notes.reversed().take(3).forEach { (time, txt, sender) ->
+                                val senderName = if (sender == "HAIKAL") haikalName else if (sender == "UMMU") ummuName else "Anonim"
+                                val senderColor = if (sender == "HAIKAL") HaikalAccent else UmmuAccent
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(BgDeep)
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(txt, fontSize = 11.sp, color = TextPrimary)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Oleh: $senderName",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = senderColor
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Write area
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = gratitudeInputText,
+                            onValueChange = { gratitudeInputText = it },
+                            textStyle = androidx.compose.ui.text.TextStyle(color = TextPrimary, fontSize = 11.sp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(BgDeep)
+                                .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                                .padding(10.dp),
+                            decorationBox = { innerTextField ->
+                                if (gratitudeInputText.isEmpty()) {
+                                    Text("Ketik sesuatu yang manis tentang pasanganmu...", fontSize = 11.sp, color = TextMuted)
+                                }
+                                innerTextField()
+                            }
+                        )
+
+                        Button(
+                            onClick = {
+                                if (gratitudeInputText.trim().isNotEmpty()) {
+                                    val newArr = try {
+                                        org.json.JSONArray(gratitudeJson).apply {
+                                            val obj = org.json.JSONObject().apply {
+                                                put("timestamp", System.currentTimeMillis())
+                                                put("text", gratitudeInputText.trim())
+                                                put("sender", deviceOwnerRole)
+                                            }
+                                            put(obj)
+                                        }
+                                    } catch (e: Exception) {
+                                        org.json.JSONArray().apply {
+                                            val obj = org.json.JSONObject().apply {
+                                                put("timestamp", System.currentTimeMillis())
+                                                put("text", gratitudeInputText.trim())
+                                                put("sender", deviceOwnerRole)
+                                            }
+                                            put(obj)
+                                        }
+                                    }
+                                    viewModel.saveConfigValue("MUTUAL_GRATITUDE_JSON", newArr.toString())
+                                    gratitudeInputText = ""
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.align(Alignment.End).height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)
+                        ) {
+                            Text("Kirim Syukur 💌", fontSize = 10.sp, color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+
         // Live Chat Promo Card (Glass variation)
         item {
             GlassMorphicCard(
@@ -1972,33 +2616,33 @@ fun KeuanganScreen(
     haikalName: String,
     ummuName: String
 ) {
-    var screenState by remember { mutableStateOf(0) } // 0 = Cashflow, 1 = Anggaran, 2 = Tabungan, 3 = Cicilan, 4 = Visualisasi
+    var screenState by remember { mutableStateOf(0) } // 0 = Cashflow, 1 = Anggaran, 2 = Tabungan, 3 = Cicilan, 4 = Visualisasi, 5 = Zakat & Hemat
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Tab Selector Row
+        // Tab Selector Row (Responsive Scrollable Row)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(BgCard)
+                .horizontalScroll(rememberScrollState())
                 .padding(vertical = 4.dp, horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Sirkulasi", "Anggaran", "Tabungan", "Cicilan", "Visualisasi").forEachIndexed { idx, label ->
+            listOf("Sirkulasi", "Anggaran", "Tabungan", "Cicilan", "Visualisasi", "Zakat & Hemat").forEachIndexed { idx, label ->
                 val active = screenState == idx
                 Box(
                     modifier = Modifier
-                        .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (active) CombinedAccent.copy(alpha = 0.2f) else Color.Transparent)
                         .clickable { screenState = idx }
-                        .padding(vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = label,
                         color = if (active) CombinedAccent else TextSecondary,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -2036,6 +2680,439 @@ fun KeuanganScreen(
                     2 -> TabunganDaruratTab(viewModel, haikalName, ummuName)
                     3 -> CicilanHutangTab(viewModel)
                     4 -> VisualisasiTab(viewModel, haikalName, ummuName)
+                    5 -> ZakatTantanganTab(viewModel, haikalName, ummuName)
+                }
+            }
+        }
+    }
+}
+
+// Feature 4: Kalkulator Zakat & Sedekah, and Feature 5: Papan Tantangan Menabung Hemat 30 Hari
+@Composable
+fun ZakatTantanganTab(
+    viewModel: DuniaViewModel,
+    haikalName: String,
+    ummuName: String
+) {
+    val configs by viewModel.configs.collectAsState()
+    val stats by viewModel.monthlyStats.collectAsState()
+    val context = LocalContext.current
+
+    // Feature 4 States
+    var selectedZakatTab by remember { mutableStateOf(0) } // 0 = Zakat Profesi, 1 = Zakat Maal
+    var monthlyIncomeInput by remember { mutableStateOf((stats.totalIncome).toLong().toString()) }
+    var goldWealthInput by remember { mutableStateOf("0") }
+    var cashWealthInput by remember { mutableStateOf((stats.surplus).toLong().coerceAtLeast(0L).toString()) }
+
+    // Feature 5 States
+    val challengeProgressStr = configs["SAVING_CHALLENGE_PROGRESS"] ?: "000000000000000000000000000000" // 30 bits
+    val completedCount = challengeProgressStr.count { it == '1' }
+    val progressPercent = (completedCount * 100) / 30
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BgDeep)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // --- FEATURE 4: KALKULATOR ZAKAT & SEDEKAH ---
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("🕋", fontSize = 20.sp)
+                        Column {
+                            Text(
+                                text = "Kalkulator Zakat & Sedekah Bersama 🕊️",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Bersihkan harta sinergi berdua untuk keberkahan pernikahan sakinah.",
+                                fontSize = 9.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Inner sub-tabs
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(BgDeep)
+                            .padding(4.dp)
+                    ) {
+                        listOf("💼 Zakat Profesi", "💰 Zakat Maal (Simpanan)").forEachIndexed { idx, label ->
+                            val active = selectedZakatTab == idx
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (active) CombinedAccent else Color.Transparent)
+                                    .clickable { selectedZakatTab = idx }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (active) Color.White else TextPrimary
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val nisabBulanValue = 6800000.0 // 522 kg Beras
+                    val nisabMaalValue = 85L * 1000000L // 85 gram emas ~ 85 juta
+
+                    if (selectedZakatTab == 0) {
+                        // Zakat Profesi Calculator
+                        OutlinedTextField(
+                            value = monthlyIncomeInput,
+                            onValueChange = { monthlyIncomeInput = it },
+                            label = { Text("Pendapatan Gabungan Bulanan (Rp)") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        val incomeVal = monthlyIncomeInput.toDoubleOrNull() ?: 0.0
+                        val isOverNisab = incomeVal >= nisabBulanValue
+                        val zakatProfesiValue = if (isOverNisab) incomeVal * 0.025 else 0.0
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SuccessAccent.copy(alpha = 0.06f))
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Nisab Bulanan:", fontSize = 11.sp, color = TextSecondary)
+                                    Text(formatRupiah(nisabBulanValue), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Status Nisab:", fontSize = 11.sp, color = TextSecondary)
+                                    Text(
+                                        text = if (isOverNisab) "Wajib Zakat (Mencapai Nisab)" else "Belum Wajib Zakat",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isOverNisab) SuccessAccent else WarningAccent
+                                    )
+                                }
+                                HorizontalDivider(color = BorderColor.copy(alpha = 0.3f), modifier = Modifier.padding(vertical = 4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Estimasi Zakat (2.5%):", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                    Text(formatRupiah(zakatProfesiValue), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = SuccessAccent)
+                                }
+                            }
+                        }
+
+                        if (zakatProfesiValue > 0) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.addTransaction(
+                                        amount = zakatProfesiValue,
+                                        type = "PENGELUARAN",
+                                        category = "Zakat & Sedekah",
+                                        description = "Bayar Zakat Profesi Bulanan",
+                                        user = "BERDUA",
+                                        tag = "#rutin",
+                                        imageUri = null
+                                    )
+                                    Toast.makeText(context, "✅ Zakat Profesi berhasil dicatatkan di pengeluaran!", Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = SuccessAccent),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth().height(38.dp)
+                            ) {
+                                Text("Bayar & Catat Zakat 🕋", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                    } else {
+                        // Zakat Maal Calculator
+                        OutlinedTextField(
+                            value = cashWealthInput,
+                            onValueChange = { cashWealthInput = it },
+                            label = { Text("Total Tabungan Cair Bersama (Rp)") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = goldWealthInput,
+                            onValueChange = { goldWealthInput = it },
+                            label = { Text("Emas/Investasi Lain (Dikonversi ke Rupiah)") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        val cashVal = cashWealthInput.toDoubleOrNull() ?: 0.0
+                        val goldVal = goldWealthInput.toDoubleOrNull() ?: 0.0
+                        val totalMaal = cashVal + goldVal
+                        val isMaalOverNisab = totalMaal >= nisabMaalValue
+                        val zakatMaalValue = if (isMaalOverNisab) totalMaal * 0.025 else 0.0
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SuccessAccent.copy(alpha = 0.06f))
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Nisab Maal Emas (85gr):", fontSize = 11.sp, color = TextSecondary)
+                                    Text(formatRupiah(nisabMaalValue.toDouble()), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Total Harta Maal:", fontSize = 11.sp, color = TextSecondary)
+                                    Text(formatRupiah(totalMaal), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Status Nisab:", fontSize = 11.sp, color = TextSecondary)
+                                    Text(
+                                        text = if (isMaalOverNisab) "Wajib Zakat (Mencapai Nisab)" else "Belum Wajib Zakat",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isMaalOverNisab) SuccessAccent else WarningAccent
+                                    )
+                                }
+                                HorizontalDivider(color = BorderColor.copy(alpha = 0.3f), modifier = Modifier.padding(vertical = 4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Estimasi Zakat Maal (2.5%):", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                    Text(formatRupiah(zakatMaalValue), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = SuccessAccent)
+                                }
+                            }
+                        }
+
+                        if (zakatMaalValue > 0) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.addTransaction(
+                                        amount = zakatMaalValue,
+                                        type = "PENGELUARAN",
+                                        category = "Zakat & Sedekah",
+                                        description = "Bayar Zakat Maal Tahunan",
+                                        user = "BERDUA",
+                                        tag = "#rutin",
+                                        imageUri = null
+                                    )
+                                    Toast.makeText(context, "✅ Zakat Maal berhasil dicatatkan!", Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = SuccessAccent),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth().height(38.dp)
+                            ) {
+                                Text("Bayar & Catat Zakat Maal 💰", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- FEATURE 5: PAPAN TANTANGAN MENABUNG HEMAT 30 HARI ---
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("🔥", fontSize = 20.sp)
+                            Column {
+                                Text(
+                                    text = "30-Day Budget Saving Challenge 🎯",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Selesaikan tantangan hemat harian demi target nikah cepat!",
+                                    fontSize = 9.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CombinedAccent.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("$progressPercent% Selesai", fontSize = 10.sp, color = CombinedAccent, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "Selesai: $completedCount dari 30 Tantangan harian",
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Progress capsule
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape)
+                            .background(BgDeep)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progressPercent / 100f)
+                                .background(CombinedAccent)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // 30 Days Grid layout using Row chunks of 5
+                    val challengeTitles = listOf(
+                        "Tanpa jajan kopi kekinian", "Masak bareng di rumah", "Pakai promo minimarket", "Naik KRL/ojol hemat", "Bawa bekal minum botol",
+                        "No impulse shopping online", "Tunda beli baju baru", "Hapus aplikasi jajan sore", "Olahraga lari gratis", "Nonton film gratis rumah",
+                        "Beli pulsa paket hemat", "Jalan sore sunset gratis", "Disiplin isi celengan koin", "Rawat sayur bumbu masak", "Bersih-bersih mainan bekas",
+                        "Saling pijat kurangi spa", "Bikin teh manis buatan sendiri", "Beli sembako grosir grosiran", "Pakai dompet koin teratur", "Atur kuota harian ketat",
+                        "Makan di Angkringan", "Hemat listrik/cabut colokan", "Bawa bekal kantor pribadi", "Jajan pasar tradisional", "Tunda langganan premium",
+                        "Tantangan 24 jam Rp 0 jajan", "Beli buah lokal pasar", "Cuci motor/mobil mandiri", "Piknik bawa bekal sendiri", "Evaluasi mingguan tabungan"
+                    )
+
+                    val gridRows = (0..29).chunked(5)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        gridRows.forEach { rowIndices ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowIndices.forEach { dayIdx ->
+                                    val isCompleted = challengeProgressStr.getOrNull(dayIdx) == '1'
+                                    
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (isCompleted) CombinedAccent else BgDeep)
+                                            .clickable {
+                                                val newProgressBuilder = StringBuilder(challengeProgressStr)
+                                                newProgressBuilder.setCharAt(dayIdx, if (isCompleted) '0' else '1')
+                                                viewModel.saveConfigValue("SAVING_CHALLENGE_PROGRESS", newProgressBuilder.toString())
+                                                
+                                                val toastMsg = if (!isCompleted) {
+                                                    "🎉 Day ${dayIdx+1} Selesai: '${challengeTitles[dayIdx]}'. Keren!"
+                                                } else {
+                                                    "Tantangan Day ${dayIdx+1} dibatalkan"
+                                                }
+                                                Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+                                            }
+                                            .padding(4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "H${dayIdx + 1}",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isCompleted) Color.White else TextPrimary
+                                            )
+                                            Text(
+                                                text = if (isCompleted) "✓" else "🔥",
+                                                fontSize = 8.sp,
+                                                color = if (isCompleted) Color.White else TextMuted
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(BgDeep)
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "💡 Petunjuk: Ketuk nomor box tantangan di atas setelah kamu berhasil menyelesaikannya hari ini bersama pasangan!",
+                            fontSize = 9.sp,
+                            color = TextSecondary,
+                            lineHeight = 13.sp
+                        )
+                    }
                 }
             }
         }
@@ -2991,7 +4068,8 @@ fun CashflowLedgerTab(
 
     // Dialog state
     var selectedType by remember { mutableStateOf("PENGELUARAN") }
-    var selectedUser by remember { mutableStateOf("HAIKAL") }
+    val deviceOwnerRole by viewModel.deviceOwnerState.collectAsState()
+    var selectedUser by remember(deviceOwnerRole) { mutableStateOf(deviceOwnerRole) }
     var inputAmount by remember { mutableStateOf("") }
     var inputCategory by remember { mutableStateOf("Makan, Sembako & Jajan") }
     var inputDesc by remember { mutableStateOf("") }
@@ -7020,12 +8098,297 @@ fun formatCompactRupiah(amount: Double): String {
 // 3. ROADMAP & MILESTONES (FITUR 09)
 // ==========================================
 
+// Feature 6: Visual Dream Board Sinergi (Visi Berdua)
+@Composable
+fun DreamBoardSinergiView(viewModel: DuniaViewModel) {
+    val configs by viewModel.configs.collectAsState()
+    val context = LocalContext.current
+
+    val defaultDreamsJson = """
+    [
+      {"id": 1, "title": "Bulan Madu ke Turki ✈️", "target": 25000000, "saved": 12000000, "checked": false},
+      {"id": 2, "title": "Setup Kursi Kerja Bareng 💻", "target": 5000000, "saved": 3500000, "checked": false},
+      {"id": 3, "title": "DP Rumah Impian Bantul 🏡", "target": 35000000, "saved": 15000000, "checked": false},
+      {"id": 4, "title": "Dapur Minimalis Idaman Ummu 🍳", "target": 12000000, "saved": 4000000, "checked": false}
+    ]
+    """.trimIndent()
+
+    val dreamsJson = configs["MUTUAL_DREAMS_JSON"] ?: defaultDreamsJson
+
+    var showAddDreamDialog by remember { mutableStateOf(false) }
+    var newDreamTitle by remember { mutableStateOf("") }
+    var newDreamTarget by remember { mutableStateOf("") }
+    var newDreamSaved by remember { mutableStateOf("") }
+
+    val dreamsList = remember(dreamsJson) {
+        val list = mutableListOf<org.json.JSONObject>()
+        try {
+            val arr = org.json.JSONArray(dreamsJson)
+            for (i in 0 until arr.length()) {
+                list.add(arr.getJSONObject(i))
+            }
+        } catch (e: Exception) {
+            // fallback
+        }
+        list
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("✨ Dream Board Sinergi", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text("Visualisasikan impian manis berdua & pantau jalurnya!", fontSize = 11.sp, color = TextSecondary)
+                }
+
+                Button(
+                    onClick = { showAddDreamDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(30.dp)
+                ) {
+                    Text("Tambah Impian ➕", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        items(dreamsList.size) { idx ->
+            val obj = dreamsList[idx]
+            val id = obj.optInt("id", 0)
+            val title = obj.optString("title", "Impian Berdua")
+            val target = obj.optDouble("target", 1.0)
+            val saved = obj.optDouble("saved", 0.0)
+            val checked = obj.optBoolean("checked", false)
+
+            val progress = (saved / target).toFloat().coerceIn(0f, 1f)
+            val percentage = (progress * 100).toInt()
+
+            GlassMorphicCard(
+                modifier = Modifier.fillMaxWidth().testTag("dreamboard_item_$id"),
+                borderAccent = if (checked) SuccessAccent else CombinedAccent,
+                glowColor = if (checked) SuccessAccent else CombinedAccent
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = if (checked) "✅" else "✨",
+                                fontSize = 16.sp
+                            )
+                            Text(
+                                title,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (checked) SuccessAccent else TextPrimary,
+                                textDecoration = if (checked) androidx.compose.ui.text.style.TextDecoration.LineThrough else null
+                            )
+                        }
+
+                        // Done checkbox
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (checked) SuccessAccent else BgDeep)
+                                .clickable {
+                                    val newArr = org.json.JSONArray()
+                                    dreamsList.forEach { item ->
+                                        if (item.optInt("id") == id) {
+                                            item.put("checked", !checked)
+                                        }
+                                        newArr.put(item)
+                                    }
+                                    viewModel.saveConfigValue("MUTUAL_DREAMS_JSON", newArr.toString())
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (checked) {
+                                Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Progres Tabungan:",
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                        Text(
+                            "${formatRupiah(saved)} / ${formatRupiah(target)} ($percentage%)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                    }
+
+                    // Progress bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(BgDeep)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progress)
+                                .background(if (checked) SuccessAccent else CombinedAccent)
+                        )
+                    }
+
+                    // Quick buttons +/- Rp 500k
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                if (saved > 0) {
+                                    val newArr = org.json.JSONArray()
+                                    dreamsList.forEach { item ->
+                                        if (item.optInt("id") == id) {
+                                            val newVal = (saved - 500000.0).coerceAtLeast(0.0)
+                                            item.put("saved", newVal)
+                                        }
+                                        newArr.put(item)
+                                    }
+                                    viewModel.saveConfigValue("MUTUAL_DREAMS_JSON", newArr.toString())
+                                }
+                            }
+                        ) {
+                            Text("-500Rb", fontSize = 10.sp, color = DangerAccent)
+                        }
+
+                        TextButton(
+                            onClick = {
+                                if (saved < target) {
+                                    val newArr = org.json.JSONArray()
+                                    dreamsList.forEach { item ->
+                                        if (item.optInt("id") == id) {
+                                            val newVal = (saved + 500000.0).coerceAtMost(target)
+                                            item.put("saved", newVal)
+                                        }
+                                        newArr.put(item)
+                                    }
+                                    viewModel.saveConfigValue("MUTUAL_DREAMS_JSON", newArr.toString())
+                                }
+                            }
+                        ) {
+                            Text("+500Rb", fontSize = 10.sp, color = SuccessAccent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // New Dream Dialog
+    if (showAddDreamDialog) {
+        val defaultContext = LocalContext.current
+        AlertDialog(
+            onDismissRequest = { showAddDreamDialog = false },
+            containerColor = BgCard,
+            title = { Text("Tambah Impian Sinergi 🚀", fontSize = 14.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = newDreamTitle,
+                        onValueChange = { newDreamTitle = it },
+                        label = { Text("Nama Impian (e.g. Bulan Madu 🌊)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = newDreamTarget,
+                        onValueChange = { newDreamTarget = it },
+                        label = { Text("Target Dana (Rp)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = newDreamSaved,
+                        onValueChange = { newDreamSaved = it },
+                        label = { Text("Dana Terkumpul Sekarang (Rp)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val tar = newDreamTarget.toDoubleOrNull() ?: 0.0
+                        val sav = newDreamSaved.toDoubleOrNull() ?: 0.0
+                        if (newDreamTitle.trim().isNotEmpty() && tar > 0) {
+                            val newObj = org.json.JSONObject().apply {
+                                put("id", (dreamsList.maxOfOrNull { it.optInt("id", 0) } ?: 0) + 1)
+                                put("title", newDreamTitle.trim())
+                                put("target", tar)
+                                put("saved", sav)
+                                put("checked", false)
+                            }
+                            val newArr = org.json.JSONArray()
+                            dreamsList.forEach { newArr.put(it) }
+                            newArr.put(newObj)
+
+                            viewModel.saveConfigValue("MUTUAL_DREAMS_JSON", newArr.toString())
+                            showAddDreamDialog = false
+                            newDreamTitle = ""
+                            newDreamTarget = ""
+                            newDreamSaved = ""
+                        } else {
+                            Toast.makeText(defaultContext, "Lengkapi isian dengan benar", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Simpan", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDreamDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+}
+
 @Composable
 fun RoadmapGoalsScreen(viewModel: DuniaViewModel) {
     val milestones by viewModel.milestones.collectAsState()
     val configs by viewModel.configs.collectAsState()
 
     var activeFaseCategory by remember { mutableStateOf(0) } // 0..4
+    var activeRoadmapTab by remember { mutableStateOf(0) } // 0 = Roadmap, 1 = Dream Board
 
     val defaultFaseDescriptions = listOf(
         "Fase 0 (2026): 'Tahun Santai & Fondasi' - Fokus stabilisasi, lunas jaket, bangun dana darurat 3jt, bangun habit harian.",
@@ -7068,45 +8431,63 @@ fun RoadmapGoalsScreen(viewModel: DuniaViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Selection TabRow
+        TabRow(
+            selectedTabIndex = activeRoadmapTab,
+            containerColor = BgCard,
+            contentColor = CombinedAccent
         ) {
-            Text("🗺️ Roadmap Hidup 2026 - 2030+", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-            
-            Button(
-                onClick = {
-                    newTitle = ""
-                    newDesc = ""
-                    newTargetDate = ""
-                    showAddMilestoneDialog = true
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                modifier = Modifier.height(30.dp)
-            ) {
-                Text("Tambah Milestone ➕", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Tab(selected = activeRoadmapTab == 0, onClick = { activeRoadmapTab = 0 }) {
+                Text("🗺️ Milestone Fase", modifier = Modifier.padding(10.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Tab(selected = activeRoadmapTab == 1, onClick = { activeRoadmapTab = 1 }) {
+                Text("✨ Dream Board Sinergi", modifier = Modifier.padding(10.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Fase buttons row
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val stages = listOf("Fase 0", "Fase 1", "Fase 2", "Fase 3", "Fase 4")
-            items(stages.size) { idx ->
-                val active = activeFaseCategory == idx
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (active) CombinedAccent.copy(alpha = 0.25f) else BgCard)
-                        .border(1.dp, if (active) CombinedAccent else BorderColor, RoundedCornerShape(8.dp))
-                        .clickable { activeFaseCategory = idx }
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
+        if (activeRoadmapTab == 1) {
+            DreamBoardSinergiView(viewModel)
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🗺️ Roadmap Hidup 2026 - 2030+", fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                
+                Button(
+                    onClick = {
+                        newTitle = ""
+                        newDesc = ""
+                        newTargetDate = ""
+                        showAddMilestoneDialog = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(30.dp)
                 ) {
-                    Text(stages[idx], color = if (active) CombinedAccent else TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Tambah Milestone ➕", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
-        }
+
+            // Box wrapping the rest of the existing Roadmap structure
+            // Fase buttons row
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val stages = listOf("Fase 0", "Fase 1", "Fase 2", "Fase 3", "Fase 4")
+                items(stages.size) { idx ->
+                    val active = activeFaseCategory == idx
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (active) CombinedAccent.copy(alpha = 0.25f) else BgCard)
+                            .border(1.dp, if (active) CombinedAccent else BorderColor, RoundedCornerShape(8.dp))
+                            .clickable { activeFaseCategory = idx }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(stages[idx], color = if (active) CombinedAccent else TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
 
         // Selected Fase summary with Edit option
         Column(
@@ -7223,6 +8604,7 @@ fun RoadmapGoalsScreen(viewModel: DuniaViewModel) {
             }
         }
     }
+}
 
     // ADD MILESTONE DIALOG
     if (showAddMilestoneDialog) {
@@ -8111,12 +9493,645 @@ fun PrayerItemRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit)
 // ==========================================
 
 @Composable
+fun KalenderSinergiView(
+    viewModel: com.example.ui.DuniaViewModel,
+    haikalName: String,
+    ummuName: String
+) {
+    val events by viewModel.events.collectAsState()
+    val context = LocalContext.current
+    val deviceOwnerRole by viewModel.deviceOwnerState.collectAsState()
+
+    var calendarMonth by remember { mutableStateOf(Calendar.getInstance()) }
+    var selectedDayStr by remember { 
+        val today = Calendar.getInstance()
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        mutableStateOf(sdf.format(today.time)) 
+    }
+
+    // Trigger state for adding new Event dialog
+    var showAddEventDialog by remember { mutableStateOf(false) }
+
+    // Dialog state variables
+    var eventTitle by remember { mutableStateOf("") }
+    var eventDateStr by remember { mutableStateOf(selectedDayStr) }
+    var eventTimeStr by remember { mutableStateOf("19:00") }
+    var eventType by remember { mutableStateOf("KENCAN") } 
+    var eventNotes by remember { mutableStateOf("") }
+    var eventOwner by remember { mutableStateOf(deviceOwnerRole) }
+
+    // Reset date picker when clicked day changes
+    LaunchedEffect(selectedDayStr) {
+        eventDateStr = selectedDayStr
+    }
+
+    // Month calculations
+    val currentYear = calendarMonth.get(Calendar.YEAR)
+    val currentMonth = calendarMonth.get(Calendar.MONTH) // 0-11
+    val monthYearFormat = SimpleDateFormat("MMMM yyyy", Locale("id", "ID"))
+    val displayedMonthLabel = monthYearFormat.format(calendarMonth.time)
+
+    // Calendar logic
+    val daysInMonth = calendarMonth.getActualMaximum(Calendar.DAY_OF_MONTH)
+    val tempCal = Calendar.getInstance().apply {
+        set(Calendar.YEAR, currentYear)
+        set(Calendar.MONTH, currentMonth)
+        set(Calendar.DAY_OF_MONTH, 1)
+    }
+    val firstDayOfWeek = tempCal.get(Calendar.DAY_OF_WEEK) // 1 to 7
+
+    val gridItems = mutableListOf<String>()
+    // Add empty slots for days before the 1st
+    for (i in 1 until firstDayOfWeek) {
+        gridItems.add("")
+    }
+    // Add actual days
+    for (i in 1..daysInMonth) {
+        gridItems.add(i.toString())
+    }
+
+    // Filter events for selected month & selected day
+    val monthSdf = SimpleDateFormat("yyyy-MM", Locale.US)
+    val activeMonthStr = monthSdf.format(calendarMonth.time) // "YYYY-MM"
+
+    val eventsThisMonth = events.filter { it.dateStr.startsWith(activeMonthStr) }
+    val eventsSelectedDay = events.filter { it.dateStr == selectedDayStr }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BgDeep)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // 1. MONTH SELECTOR & NAVIGATION CARD
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Header navigation
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = {
+                            val prevCal = (calendarMonth.clone() as Calendar).apply {
+                                add(Calendar.MONTH, -1)
+                            }
+                            calendarMonth = prevCal
+                        }) {
+                            Text("◀", color = CombinedAccent, fontSize = 16.sp)
+                        }
+
+                        Text(
+                            text = displayedMonthLabel.uppercase(),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+
+                        IconButton(onClick = {
+                            val nextCal = (calendarMonth.clone() as Calendar).apply {
+                                add(Calendar.MONTH, 1)
+                            }
+                            calendarMonth = nextCal
+                        }) {
+                            Text("▶", color = CombinedAccent, fontSize = 16.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Column Header: Days of the week
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        val daysOfWeek = listOf("MIN", "SEN", "SEL", "RAB", "KAM", "JUM", "SAB")
+                        daysOfWeek.forEach { dayName ->
+                            Text(
+                                text = dayName,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextMuted
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Calendar Days Grid using Row/Chunking
+                    val rows = gridItems.chunked(7)
+                    rows.forEach { rowDays ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            rowDays.forEach { dayNumStr ->
+                                if (dayNumStr.isEmpty()) {
+                                    Box(modifier = Modifier.weight(1f).aspectRatio(1f))
+                                } else {
+                                    val formattedDayNum = dayNumStr.padStart(2, '0')
+                                    val currentDateKey = "$activeMonthStr-$formattedDayNum"
+                                    val isSelected = selectedDayStr == currentDateKey
+                                    
+                                    val dayEvents = eventsThisMonth.filter { it.dateStr == currentDateKey }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .aspectRatio(1f)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) CombinedAccent else Color.Transparent)
+                                            .clickable {
+                                                selectedDayStr = currentDateKey
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            Text(
+                                                text = dayNumStr,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSelected) Color.White else TextPrimary
+                                            )
+                                            
+                                            // Tiny multi-colored indicators
+                                            if (dayEvents.isNotEmpty()) {
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(top = 2.dp)
+                                                ) {
+                                                    dayEvents.take(3).forEach { ev ->
+                                                        val dotColor = when (ev.type) {
+                                                            "KENCAN" -> UmmuAccent
+                                                            "PERGI/LIBURAN" -> WarningAccent
+                                                            "RAPAT" -> HaikalAccent
+                                                            "HARI_PENTING" -> SuccessAccent
+                                                            else -> TextMuted
+                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(4.dp)
+                                                                .clip(CircleShape)
+                                                                .background(if (isSelected) Color.White else dotColor)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. ACTIVE AGENDA DETAILS FOR SELECTED DATE
+        item {
+            val titleDateFormat = SimpleDateFormat("dd MMMM yyyy", Locale("id", "ID"))
+            val parsedDate = try {
+                SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(selectedDayStr)
+            } catch (e: Exception) {
+                Date()
+            }
+            val formattedDateLabel = titleDateFormat.format(parsedDate)
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "AGENDA & ACARA 👤",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = formattedDateLabel,
+                            fontSize = 11.sp,
+                            color = TextSecondary
+                        )
+                    }
+
+                    Button(
+                        onClick = { showAddEventDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text("➕", fontSize = 11.sp)
+                            Text("Jadwal Baru", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                if (eventsSelectedDay.isEmpty()) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = BgCard),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, BorderColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text("🌸", fontSize = 24.sp)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Belum ada agenda di tanggal ini.",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "Yuk, ajak pasanganmu ngedate atau rencanakan rapat sinergi keuangan bareng agar target menikah tercapai! 💕",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                } else {
+                    eventsSelectedDay.forEach { ev ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = BgCard),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val (badgeBg, badgeText, typeEmoji) = when (ev.type) {
+                                        "KENCAN" -> Triple(UmmuAccent.copy(alpha = 0.15f), UmmuAccent, "💖")
+                                        "PERGI/LIBURAN" -> Triple(WarningAccent.copy(alpha = 0.15f), WarningAccent, "🚗")
+                                        "RAPAT" -> Triple(HaikalAccent.copy(alpha = 0.15f), HaikalAccent, "🤝")
+                                        "HARI_PENTING" -> Triple(SuccessAccent.copy(alpha = 0.15f), SuccessAccent, "🎉")
+                                        else -> Triple(TextMuted.copy(alpha = 0.15f), TextPrimary, "📅")
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(badgeBg)
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "$typeEmoji ${ev.type}",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = badgeText
+                                        )
+                                    }
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.triggerPartnerEventNotification(ev)
+                                                android.widget.Toast.makeText(context, "🔔 Peringatan/Colekan agenda dikirim ke pasangan!", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Text("🔔", fontSize = 13.sp)
+                                        }
+
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.deleteEvent(ev)
+                                                android.widget.Toast.makeText(context, "Agenda dihapus", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Text("🗑️", fontSize = 13.sp)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    text = ev.title,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+
+                                Row(
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("⏰", fontSize = 11.sp)
+                                        Text(ev.timeStr, fontSize = 10.sp, color = TextSecondary)
+                                    }
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("👤", fontSize = 11.sp)
+                                        val author = if (ev.owner == "HAIKAL") haikalName else if (ev.owner == "UMMU") ummuName else "Berdua"
+                                        Text("Oleh: $author", fontSize = 10.sp, color = TextSecondary)
+                                    }
+                                }
+
+                                if (ev.notes.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(BgDeep)
+                                            .padding(10.dp)
+                                    ) {
+                                        Text(
+                                            text = ev.notes,
+                                            fontSize = 10.sp,
+                                            color = TextSecondary,
+                                            lineHeight = 14.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. RAPID SYNERGY PRESET SUGGESTIONS
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = BgCard),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("💡", fontSize = 18.sp)
+                        Column {
+                            Text(
+                                text = "Pintu Pintas Preset Acara ⚡",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Pilih rencana preset di bawah ini untuk menjadwalkan agenda romantis secara otomatis pada tanggal yang dipilih.",
+                                fontSize = 9.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val presets = listOf(
+                        Triple("🍛 Kencan Kuliner Angkringan", "KENCAN", "Makan santai murah di angkringan, menikmati nasi kucing & teh manis anget."),
+                        Triple("🚙 Piknik Bantul Sunset", "PERGI/LIBURAN", "Jalan-jalan santai sore melihat sunset bersama bekal masakan rumah."),
+                        Triple("🤝 Rapat Sinergi Bulanan", "RAPAT", "Evaluasi keuangan akhir bulan, update saving goal pernikahan bersama."),
+                        Triple("🍿 Movie Night di Rumah", "KENCAN", "Menonton film favorit berdua di rumah sambil ngobrol santai hemat.")
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        presets.forEach { (pTitle, pType, pNotes) ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(BgDeep)
+                                    .clickable {
+                                        viewModel.addEvent(pTitle, selectedDayStr, "19:00", pType, pNotes, deviceOwnerRole)
+                                        android.widget.Toast.makeText(context, "✅ Preset '${pTitle}' ditambahkan ke kalender!", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 6.dp)) {
+                                        Text(pTitle, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                                        Text(pNotes, fontSize = 9.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Text("⚡ Ajak", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = CombinedAccent)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Modal dialog to Add Event
+    if (showAddEventDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddEventDialog = false },
+            containerColor = BgCard,
+            title = { Text("Jadwal Baru Sinergi 📅", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = eventTitle,
+                        onValueChange = { eventTitle = it },
+                        label = { Text("Nama Acara / Kegiatan") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = eventDateStr,
+                        onValueChange = { eventDateStr = it },
+                        label = { Text("Tanggal (YYYY-MM-DD)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = eventTimeStr,
+                        onValueChange = { eventTimeStr = it },
+                        label = { Text("Waktu (HH:MM)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Type Selector
+                    Column {
+                        Text("Tipe Kegiatan:", fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("KENCAN", "PERGI/LIBURAN", "RAPAT", "HARI_PENTING").forEach { t ->
+                                val isSel = eventType == t
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSel) CombinedAccent else BgDeep)
+                                        .clickable { eventType = t }
+                                        .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = when(t) {
+                                            "KENCAN" -> "💖 Kencan"
+                                            "PERGI/LIBURAN" -> "🚗 Pergi"
+                                            "RAPAT" -> "🤝 Rapat"
+                                            "HARI_PENTING" -> "🎉 Penting"
+                                            else -> t
+                                        },
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) Color.White else TextPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Owner Selector
+                    Column(modifier = Modifier.padding(top = 4.dp)) {
+                        Text("Pencatat / Pemilik Acara:", fontSize = 11.sp, color = TextSecondary, fontWeight = FontWeight.Bold)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("HAIKAL", "UMMU", "BERDUA").forEach { o ->
+                                val isSel = eventOwner == o
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSel) CombinedAccent else BgDeep)
+                                        .clickable { eventOwner = o }
+                                        .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = when(o) {
+                                            "HAIKAL" -> haikalName
+                                            "UMMU" -> ummuName
+                                            else -> "Berdua"
+                                        },
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) Color.White else TextPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = eventNotes,
+                        onValueChange = { eventNotes = it },
+                        label = { Text("Catatan Detail (Opsional)") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CombinedAccent),
+                        singleLine = false,
+                        maxLines = 3,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (eventTitle.trim().isEmpty() || eventDateStr.trim().isEmpty()) {
+                            android.widget.Toast.makeText(context, "Harap lengkapi judul dan tanggal", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.addEvent(
+                                title = eventTitle,
+                                dateStr = eventDateStr,
+                                timeStr = eventTimeStr,
+                                type = eventType,
+                                notes = eventNotes,
+                                owner = eventOwner
+                            )
+                            try {
+                                DuniaNotificationHelper.sendNotification(
+                                    context,
+                                    "Jadwal Baru Terdaftar! 📅",
+                                    "Acara '$eventTitle' dijadwalkan pada $eventDateStr pukul $eventTimeStr"
+                                )
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            android.widget.Toast.makeText(context, "Acara berhasil dijadwalkan! 🎉", android.widget.Toast.LENGTH_SHORT).show()
+                            showAddEventDialog = false
+                            eventTitle = ""
+                            eventNotes = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CombinedAccent)
+                ) {
+                    Text("Jadwalkan", color = Color.White)
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = { showAddEventDialog = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = BgDeep)
+                ) {
+                    Text("Batal", color = TextPrimary)
+                }
+            }
+        )
+    }
+}
+
+@Composable
 fun RapatWishlistScreen(
     viewModel: DuniaViewModel,
     haikalName: String,
     ummuName: String
 ) {
-    var partitionState by remember { mutableStateOf(0) } // 0 = Rapat Bulanan, 1 = Wishlist Control, 2 = Roda Keputusan
+    var partitionState by remember { mutableStateOf(0) } // 0 = Kalender, 1 = Rapat Bulanan, 2 = Wishlist Control, 3 = Roda Keputusan
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(
@@ -8125,13 +10140,16 @@ fun RapatWishlistScreen(
             contentColor = CombinedAccent
         ) {
             Tab(selected = partitionState == 0, onClick = { partitionState = 0 }) {
-                Text("🤝 Rapat Bulanan", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("📅 Kalender", modifier = Modifier.padding(6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
             Tab(selected = partitionState == 1, onClick = { partitionState = 1 }) {
-                Text("🛒 Wishlist Impulse", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("🤝 Rapat Bulanan", modifier = Modifier.padding(6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
             Tab(selected = partitionState == 2, onClick = { partitionState = 2 }) {
-                Text("🎡 Roda Putar", modifier = Modifier.padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("🛒 Wishlist", modifier = Modifier.padding(6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+            Tab(selected = partitionState == 3, onClick = { partitionState = 3 }) {
+                Text("🎡 Roda Putar", modifier = Modifier.padding(6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
 
@@ -8161,9 +10179,10 @@ fun RapatWishlistScreen(
                 label = "RapatWishlistTab"
             ) { activePartition ->
                 when (activePartition) {
-                    0 -> RapatReviewsView(viewModel)
-                    1 -> WishlistControlView(viewModel, haikalName, ummuName)
-                    2 -> RodaPutarDateNightView(viewModel)
+                    0 -> KalenderSinergiView(viewModel, haikalName, ummuName)
+                    1 -> RapatReviewsView(viewModel)
+                    2 -> WishlistControlView(viewModel, haikalName, ummuName)
+                    3 -> RodaPutarDateNightView(viewModel)
                 }
             }
         }
@@ -9175,6 +11194,78 @@ fun ProfilSettingsScreen(
                             checkedTrackColor = CombinedAccent
                         )
                     )
+                }
+            }
+        }
+
+        // IDENTITAS PEMILIK PERANGKAT / PERAN AKTIF (Saves to deviceOwnerState preference locally)
+        item {
+            val deviceOwner by viewModel.deviceOwnerState.collectAsState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(BgCard)
+                    .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("📱", fontSize = 18.sp)
+                    Column {
+                        Text(
+                            text = "Profil/Peran Aktif Perangkat Ini 👤",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Pilih pemilik perangkat fisik ini. Berfungsi menyelaraskan notifikasi masuk nirkabel dari aktivitas pasangan Anda, serta mengatur pencatat default secara otomatis.",
+                            fontSize = 10.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("HAIKAL", "UMMU").forEach { role ->
+                        val isSelected = deviceOwner == role
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) CombinedAccent else BgDeep)
+                                .border(1.dp, if (isSelected) CombinedAccent else BorderColor, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.saveDeviceOwnerRole(role)
+                                    android.widget.Toast.makeText(context, "Profil Aktif diubah ke: ${if (role == "HAIKAL") haikalName else ummuName}", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = if (role == "HAIKAL") "👦" else "👧",
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = if (role == "HAIKAL") haikalName else ummuName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else TextPrimary
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -10450,3 +12541,59 @@ object DuniaNotificationHelper {
         }
     }
 }
+
+// ==========================================
+// 8. ADDITIONAL COUPLING SYNERGY STYLES & TYPES
+// ==========================================
+
+data class CompositeSynergy(
+    val compositeScore: Int,
+    val tier: String,
+    val financePct: Int,
+    val gratitudePct: Int,
+    val challengePct: Int,
+    val spiritualPct: Int,
+    val advice: String
+)
+
+@Composable
+fun SynergyPillarItem(
+    modifier: Modifier = Modifier,
+    label: String,
+    percentage: Int,
+    trackColor: Color
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(BgDeep)
+            .border(1.dp, BorderColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .padding(8.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(label, fontSize = 9.5.sp, color = TextPrimary, fontWeight = FontWeight.Medium)
+                Text("$percentage%", fontSize = 9.5.sp, color = trackColor, fontWeight = FontWeight.Bold)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.05f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(percentage / 100f)
+                        .background(trackColor)
+                )
+            }
+        }
+    }
+}
+

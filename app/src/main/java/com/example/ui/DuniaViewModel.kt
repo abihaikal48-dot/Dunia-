@@ -133,6 +133,9 @@ class DuniaViewModel(
     val wishlistItems: StateFlow<List<WishlistEntity>> = repository.allWishlist
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val events: StateFlow<List<com.example.data.EventEntity>> = repository.allEvents
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val configs: StateFlow<Map<String, String>> = repository.configMap
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -140,7 +143,22 @@ class DuniaViewModel(
         .map { map -> map["DARK_MODE"] == "true" }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    private val _deviceOwnerState = MutableStateFlow("HAIKAL")
+    val deviceOwnerState: StateFlow<String> = _deviceOwnerState.asStateFlow()
+
+    fun getDeviceOwnerRole(): String {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        return sharedPrefs.getString("DEVICE_OWNER_ROLE", "HAIKAL") ?: "HAIKAL"
+    }
+
+    fun saveDeviceOwnerRole(role: String) {
+        val sharedPrefs = application.getSharedPreferences("dunia_sync_prefs", android.content.Context.MODE_PRIVATE)
+        sharedPrefs.edit().putString("DEVICE_OWNER_ROLE", role).apply()
+        _deviceOwnerState.value = role
+    }
+
     init {
+        _deviceOwnerState.value = getDeviceOwnerRole()
         localLastUpdated = getLocalLastUpdated()
         lastFirebaseUploadedHash = getPersistedHash("FIREBASE_HASH")
         lastSheetsUploadedHash = getPersistedHash("SHEETS_HASH")
@@ -509,6 +527,59 @@ class DuniaViewModel(
         }
 
         _notificationFlow.tryEmit(Pair(title, message))
+    }
+
+    fun triggerPartnerEventNotification(event: com.example.data.EventEntity) {
+        val configData = configs.value
+        val haikalName = configData["NAMA_HAIKAL"] ?: "Haikal"
+        val ummuName = configData["NAMA_UMMU"] ?: "Ummu"
+
+        val senderName = when (event.owner) {
+            "HAIKAL" -> haikalName
+            "UMMU" -> ummuName
+            else -> "Sinergi Bersama"
+        }
+
+        val typeEmoji = when (event.type) {
+            "KENCAN" -> "💖"
+            "PERGI/LIBURAN" -> "🚗"
+            "RAPAT" -> "🤝"
+            "HARI_PENTING" -> "🎉"
+            else -> "📅"
+        }
+
+        val typeText = when (event.type) {
+            "KENCAN" -> "Date/Kencan"
+            "PERGI/LIBURAN" -> "Pergi/Liburan"
+            "RAPAT" -> "Rapat Sinergi"
+            "HARI_PENTING" -> "Hari Penting"
+            else -> "Kegiatan"
+        }
+
+        val title = "Agenda Baru Sinergi! $typeEmoji"
+        val message = "$senderName menjadwalkan $typeText: '${event.title}' pada ${event.dateStr} pukul ${event.timeStr}."
+
+        _notificationFlow.tryEmit(Pair(title, message))
+    }
+
+    fun addEvent(title: String, dateStr: String, timeStr: String, type: String, notes: String, owner: String) {
+        viewModelScope.launch {
+            val entity = com.example.data.EventEntity(0, title, dateStr, timeStr, type, notes, owner)
+            repository.insertEvent(entity)
+            triggerPartnerEventNotification(entity)
+        }
+    }
+
+    fun deleteEvent(event: com.example.data.EventEntity) {
+        viewModelScope.launch {
+            repository.deleteEvent(event)
+        }
+    }
+
+    fun updateEvent(event: com.example.data.EventEntity) {
+        viewModelScope.launch {
+            repository.updateEvent(event)
+        }
     }
 
     fun addTransaction(
@@ -1009,6 +1080,23 @@ class DuniaViewModel(
             }
             rootObj.put("wishlist_items", wishArray)
 
+            // 10. Events
+            val eventArray = org.json.JSONArray()
+            events.value.forEach { ev ->
+                val eObj = org.json.JSONObject().apply {
+                    put("id", ev.id)
+                    put("title", ev.title)
+                    put("dateStr", ev.dateStr)
+                    put("timeStr", ev.timeStr)
+                    put("type", ev.type)
+                    put("notes", ev.notes)
+                    put("owner", ev.owner)
+                    put("reminded", ev.reminded)
+                }
+                eventArray.put(eObj)
+            }
+            rootObj.put("events", eventArray)
+
             // 9. Config
             val configArray = org.json.JSONArray()
             configs.value.forEach { (k, v) ->
@@ -1027,9 +1115,17 @@ class DuniaViewModel(
         }
     }
 
-    fun importDatabaseFromJson(jsonStr: String, mergeOnly: Boolean, onComplete: (Boolean) -> Unit) {
+    fun importDatabaseFromJson(
+        jsonStr: String,
+        mergeOnly: Boolean,
+        partnerUpdate: Boolean = false,
+        onComplete: (Boolean) -> Unit
+    ) {
         viewModelScope.launch {
             isImportingDatabase = true
+            val existingTxKeys = transactions.value.map { "${it.timestamp}_${it.description}_${it.amount}" }.toSet()
+            val notifyList = mutableListOf<TransactionEntity>()
+            val hasPreviousTransactions = transactions.value.isNotEmpty()
             try {
                 val root = org.json.JSONObject(jsonStr)
 
@@ -1199,6 +1295,28 @@ class DuniaViewModel(
                     repository.insertWishlistItems(wList)
                 }
 
+                // 10. Events
+                val eventArray = root.optJSONArray("events")
+                if (eventArray != null) {
+                    val evList = mutableListOf<com.example.data.EventEntity>()
+                    for (i in 0 until eventArray.length()) {
+                        val obj = eventArray.getJSONObject(i)
+                        evList.add(
+                            com.example.data.EventEntity(
+                                id = if (mergeOnly) 0 else obj.optInt("id", 0),
+                                title = obj.getString("title"),
+                                dateStr = obj.getString("dateStr"),
+                                timeStr = obj.getString("timeStr"),
+                                type = obj.getString("type"),
+                                notes = obj.getString("notes"),
+                                owner = obj.getString("owner"),
+                                reminded = obj.optBoolean("reminded", false)
+                            )
+                        )
+                    }
+                    repository.insertEventsList(evList)
+                }
+
                 // 9. Transactions
                 val txArray = root.optJSONArray("transactions")
                 if (txArray != null) {
@@ -1212,23 +1330,39 @@ class DuniaViewModel(
                             transactions.value.any { it.description == curDesc && it.amount == curAmt }
                         } else false
 
+                        val txTimestamp = obj.getLong("timestamp")
+                        val txDesc = obj.getString("description")
+                        val txAmount = obj.getDouble("amount")
+                        val txKey = "${txTimestamp}_${txDesc}_${txAmount}"
+                        val isNew = hasPreviousTransactions && !existingTxKeys.contains(txKey)
+
+                        val txEntity = TransactionEntity(
+                            id = if (mergeOnly) 0 else obj.optInt("id", 0),
+                            timestamp = txTimestamp,
+                            type = obj.getString("type"),
+                            user = obj.getString("user"),
+                            amount = txAmount,
+                            category = obj.getString("category"),
+                            description = txDesc,
+                            tag = obj.getString("tag"),
+                            imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri", null)
+                        )
+
                         if (!isDup) {
-                            txsList.add(
-                                TransactionEntity(
-                                    id = if (mergeOnly) 0 else obj.optInt("id", 0),
-                                    timestamp = obj.getLong("timestamp"),
-                                    type = obj.getString("type"),
-                                    user = obj.getString("user"),
-                                    amount = obj.getDouble("amount"),
-                                    category = obj.getString("category"),
-                                    description = obj.getString("description"),
-                                    tag = obj.getString("tag"),
-                                    imageUri = if (obj.isNull("imageUri")) null else obj.optString("imageUri", null)
-                                )
-                            )
+                            txsList.add(txEntity)
+                        }
+
+                        if (partnerUpdate && isNew) {
+                            notifyList.add(txEntity)
                         }
                     }
                     repository.insertTransactions(txsList)
+                    if (partnerUpdate && notifyList.isNotEmpty()) {
+                        notifyList.forEach { tx ->
+                            // Trigger notification for newly added transaction from partner
+                            triggerPartnerNotification(tx)
+                        }
+                    }
                 }
 
                 onComplete(true)
@@ -1271,7 +1405,8 @@ class DuniaViewModel(
                 ibadahLogs,
                 rapatItems,
                 wishlistItems,
-                configs
+                configs,
+                events
             ) { _ ->
                 System.currentTimeMillis()
             }.collect {
@@ -1509,7 +1644,7 @@ class DuniaViewModel(
 
                                 val dbObj = envelope.optJSONObject("db")
                                 if (dbObj != null) {
-                                    importDatabaseFromJson(dbObj.toString(), mergeOnly = false) { success ->
+                                    importDatabaseFromJson(dbObj.toString(), mergeOnly = false, partnerUpdate = true) { success ->
                                         isSyncingNetwork = false
                                         if (success) {
                                             localLastUpdated = cloudLastUpdated
@@ -1567,7 +1702,7 @@ class DuniaViewModel(
 
                                 val dbObj = envelope.optJSONObject("db")
                                 if (dbObj != null) {
-                                    importDatabaseFromJson(dbObj.toString(), mergeOnly = false) { success ->
+                                    importDatabaseFromJson(dbObj.toString(), mergeOnly = false, partnerUpdate = true) { success ->
                                         isFirebaseSyncingNetwork = false
                                         if (success) {
                                             localLastUpdated = cloudLastUpdated
