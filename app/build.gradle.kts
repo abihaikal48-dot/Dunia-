@@ -121,12 +121,42 @@ dependencies {
 }
 
 tasks.register<Copy>("copyApkToBuiltApp") {
+    dependsOn("packageDebug")
     from(layout.buildDirectory.dir("outputs/apk/debug"))
     include("app-debug.apk")
-    into(rootProject.file("built-app"))
+    into(rootProject.layout.projectDirectory.dir("built-app"))
 }
 
-tasks.matching { it.name == "assembleDebug" }.configureEach {
-    finalizedBy("copyApkToBuiltApp")
+tasks.register<Copy>("copyApkToBuiltAppAlt") {
+    dependsOn("packageDebug")
+    from(layout.buildDirectory.dir("outputs/apk/debug"))
+    include("app-debug.apk")
+    into(rootProject.layout.projectDirectory.dir("builtapp"))
 }
+
+tasks.register<Copy>("copyApkToBuiltAppRename") {
+    dependsOn("packageDebug")
+    from(layout.buildDirectory.dir("outputs/apk/debug"))
+    include("app-debug.apk")
+    into(rootProject.layout.projectDirectory.dir("built-app"))
+    rename { "app.debug" }
+}
+
+tasks.register<Copy>("copyApkToBuiltAppRenameAlt") {
+    dependsOn("packageDebug")
+    from(layout.buildDirectory.dir("outputs/apk/debug"))
+    include("app-debug.apk")
+    into(rootProject.layout.projectDirectory.dir("builtapp"))
+    rename { "app.debug" }
+}
+
+tasks.register("copyApkToBuiltDirs") {
+    dependsOn("copyApkToBuiltApp", "copyApkToBuiltAppAlt", "copyApkToBuiltAppRename", "copyApkToBuiltAppRenameAlt")
+}
+
+afterEvaluate {
+    tasks.findByName("assembleDebug")?.finalizedBy("copyApkToBuiltDirs")
+}
+
+
 
